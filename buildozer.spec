@@ -1,20 +1,50 @@
+
 [app]
-title = Maher Umar POS
+
+title = POS v2
+
 package.name = maherumarpos
+
 package.domain = org.maherumar
+
 source.dir = .
-source.include_exts = py,png,jpg,kv,atlas,txt
-version = 1.0.1
+
+source.include_exts = py,kv,png,jpg,jpeg,atlas,json,ttf,otf
+
+version = 2.0.0
+
 requirements = python3,kivy
+
 orientation = portrait
+
 fullscreen = 0
-android.permissions = READ_EXTERNAL_STORAGE,WRITE_EXTERNAL_STORAGE
-android.api = 33
+
+# Android permissions
+android.permissions = INTERNET
+
+# Android SDK and NDK compatibility
+android.api = 36
 android.minapi = 24
-android.ndk = 25b
+android.ndk = 29
+
+# Target architecture
+android.archs = arm64-v8a
+
+# python-for-android configuration
+p4a.branch = develop
+p4a.bootstrap = sdl2
+
+# Accept Android SDK licenses during automated builds
 android.accept_sdk_license = True
-android.skip_update = False
+
+# Keep the Android build focused on the required dependencies
+android.add_src =
+
+# Logging
+log_level = 2
+
 
 [buildozer]
-log_level = 2
+
+# Buildozer runs in the GitHub Actions Linux environment
 warn_on_root = 1
