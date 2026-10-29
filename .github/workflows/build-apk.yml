@@ -1,67 +1,89 @@
-name: Build and diagnose Maher Umar POS APK
+
+name: Build POS v2 APK
 
 on:
-  workflow_dispatch:
   push:
-    branches: [main]
-    paths:
-      - "main.py"
-      - "Maher_Umar_POS_UI_Fixed_v2-1.py"
-      - "buildozer.spec"
-      - "requirements.txt"
-      - ".github/workflows/build-apk.yml"
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: pos-v2-android-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  verify-and-build:
-    runs-on: ubuntu-22.04
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
+
     steps:
-      - name: Checkout source
+      - name: Checkout repository
         uses: actions/checkout@v4
-      - name: Set up Java 17
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Install Android build dependencies
+
+      - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential git zip unzip \
-            autoconf automake libtool libtool-bin libltdl-dev m4 gettext autopoint \
-            pkg-config cmake zlib1g-dev libffi-dev libssl-dev \
-            libncurses5-dev libncursesw5-dev libtinfo6
-          python -m pip install --upgrade pip setuptools wheel
-          python -m pip install "Cython==0.29.36" "buildozer==1.5.0"
-      - name: Verify Python syntax and expected app entrypoint
+          sudo apt-get install -y \
+            git \
+            zip \
+            unzip \
+            autoconf \
+            automake \
+            libtool \
+            pkg-config \
+            cmake \
+            build-essential \
+            libffi-dev \
+            libssl-dev \
+            zlib1g-dev \
+            libncurses-dev \
+            libtinfo6 \
+            libltdl-dev \
+            gettext \
+            ccache
+
+      - name: Install current Buildozer
         run: |
-          python -m py_compile main.py Maher_Umar_POS_UI_Fixed_v2-1.py
-          grep -q "class MaherUmarPOSApp" main.py
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install \
+            "git+https://github.com/kivy/buildozer.git"
+
+      - name: Verify build configuration
+        run: |
+          python --version
+          java -version
+          buildozer --version
+          test -f buildozer.spec
+          test -f main.py
+
       - name: Build debug APK
         run: |
-          set -o pipefail
-          buildozer -v android debug 2>&1 | tee android-build.log
-      - name: Upload APK artifact
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: maher-umar-pos-debug-apk
-          path: bin/*.apk
-          if-no-files-found: error
-          retention-days: 14
-      - name: Upload diagnostics even on failure
+          buildozer -v android debug
+
+      - name: Upload APK
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: maher-umar-pos-build-diagnostics
-          path: |
-            android-build.log
-            .buildozer/android/platform/build-*/dists/**/build.log
+          name: pos-v2-apk
+          path: bin/*.apk
           if-no-files-found: warn
           retention-days: 14
