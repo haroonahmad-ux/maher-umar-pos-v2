@@ -731,7 +731,8 @@ def show_message(message, title="Maher Umar POS"):
 
     def resize_dialog(*_):
         fit_label()
-        dialog.height = min(max(label.height + dp(112), dp(210)), dp(440))
+        max_height = max(dp(260), Window.height * 0.72)
+        dialog.height = min(max(label.height + dp(112), dp(210)), max_height)
 
     body.bind(width=resize_dialog)
     close.bind(on_release=dialog.dismiss)
@@ -964,6 +965,39 @@ class AddProductScreen(Screen):
                     "discount_percent", "discount_start", "discount_end", "discount_qty"):
             if key in self.ids:
                 self.ids[key].text = ""
+        self.ids.discount_start.text = datetime.now().strftime("%d-%m-%Y")
+        form = self.ids.discount_form
+        form.height = dp(0)
+        form.opacity = 0
+        form.disabled = True
+
+    def toggle_discount_form(self):
+        form = self.ids.discount_form
+        opening = form.disabled
+        if opening:
+            self.ids.discount_start.text = datetime.now().strftime("%d-%m-%Y")
+            form.height = dp(300)
+            form.opacity = 1
+            form.disabled = False
+        else:
+            form.height = dp(0)
+            form.opacity = 0
+            form.disabled = True
+            for key in ("discount_percent", "discount_end", "discount_qty"):
+                self.ids[key].text = ""
+
+    @staticmethod
+    def _parse_expiry(raw):
+        digits = "".join(ch for ch in (raw or "") if ch.isdigit())
+        if len(digits) != 4:
+            raise ValueError("Expiry date mein DDMM format mein 4 digits enter karein, misal: 3011.")
+        day, month = int(digits[:2]), int(digits[2:])
+        year = datetime.now().year
+        try:
+            expiry = datetime(year, month, day).date()
+        except ValueError:
+            raise ValueError("Expiry date valid nahi. DDMM dobara check karein.")
+        return expiry.strftime("%Y-%m-%d")
 
     def add_product(self):
         try:
@@ -973,26 +1007,73 @@ class AddProductScreen(Screen):
             sale = float(self.ids.saleprice.text or 0)
             stock = int(self.ids.stock.text or 0)
             pct = float(self.ids.discount_percent.text or 0)
-            start = self.ids.discount_start.text.strip()
-            end = self.ids.discount_end.text.strip()
             qty = int(self.ids.discount_qty.text or 0)
-            pid = App.get_running_app().store.add_product(name, category, purchase, sale, stock, pct, start, end, qty)
+            if pct:
+                start_display = self.ids.discount_start.text.strip()
+                try:
+                    start = datetime.strptime(start_display, "%d-%m-%Y").strftime("%Y-%m-%d")
+                except ValueError:
+                    start = datetime.now().strftime("%Y-%m-%d")
+                end = self._parse_expiry(self.ids.discount_end.text)
+            else:
+                start = end = ""
+                qty = 0
+            pid = App.get_running_app().store.add_product(
+                name, category, purchase, sale, stock, pct, start, end, qty
+            )
             App.get_running_app().refresh_home()
             App.get_running_app().root.get_screen("stock").refresh()
-            show_message(f"Product saved successfully.\nProduct ID: {pid}\nAvailable in Stock Management and checkout.", "Product saved")
             self.on_pre_enter()
+            show_message(
+                f"Product saved successfully.\nProduct ID: {pid}\nAvailable in Stock Management and checkout.",
+                "Product saved"
+            )
         except (ValueError, sqlite3.Error) as exc:
             show_message(str(exc), "Check product details")
 
 
 class StockScreen(Screen):
-    listing_text = StringProperty("")
+    filter_summary = StringProperty("Showing all products")
+    active_filter = "All products"
 
     def on_pre_enter(self, *args):
         self.refresh()
 
     def set_filter(self, value):
-        self.refresh(value)
+        self.active_filter = value
+        self.filter_summary = "Filter: " + value
+        self.refresh()
+
+    def open_filters(self):
+        store = App.get_running_app().store
+        categories = sorted({str(p["category"] or "GENERAL") for p in store.products()}, key=str.casefold)
+        options = ["All products", "Newest product", "Old products", "Low stock products", "Discounted products"]
+        options.extend(category for category in categories if category not in options)
+        content = BoxLayout(orientation="vertical", padding=dp(10), spacing=dp(6), size_hint_y=None)
+        content.bind(minimum_height=content.setter("height"))
+        scroller = ScrollView(do_scroll_x=False)
+        menu = BoxLayout(orientation="vertical", spacing=dp(6), size_hint_y=None)
+        menu.bind(minimum_height=menu.setter("height"))
+        popup = Popup(
+            title="Filter Stock",
+            content=scroller,
+            size_hint=(0.9, 0.78),
+            background_color=(1, 1, 1, 1),
+            title_color=(0.08, 0.16, 0.18, 1),
+            separator_color=(0.055, 0.34, 0.42, 1),
+            title_size="18sp"
+        )
+        for option in options:
+            button = Button(
+                text=option, size_hint_y=None, height=dp(44),
+                background_normal="", background_down="",
+                background_color=(0.88, 0.94, 0.95, 1),
+                color=(0.07, 0.26, 0.31, 1), font_size="14sp"
+            )
+            button.bind(on_release=lambda instance, selected=option: (popup.dismiss(), self.set_filter(selected)))
+            menu.add_widget(button)
+        scroller.add_widget(menu)
+        popup.open()
 
     def add_stock(self):
         try:
@@ -1007,32 +1088,81 @@ class StockScreen(Screen):
         except (ValueError, sqlite3.Error) as exc:
             show_message(str(exc), "Unable to update stock")
 
-    def refresh(self, selected=None):
-        selected = selected or self.ids.stock_filter.text
-        order = {"Newest product": "newest", "Old products": "oldest",
-                 "Low stock products": "low", "Discounted product": "discounted"}.get(selected, "newest")
-        rows = App.get_running_app().store.products(order=order)
-        today = datetime.now().date()
-        if selected == "Low stock products":
-            rows = [p for p in rows if int(p["stock"]) <= LOW_STOCK_THRESHOLD]
-        elif selected == "Discounted product":
-            rows = [p for p in rows if float(p["discount_percent"] or 0) > 0]
-        if not rows:
-            self.listing_text = "No products match this filter."
+    @staticmethod
+    def _make_product_card(product):
+        card = BoxLayout(
+            orientation="vertical", size_hint_y=None, height=dp(122),
+            padding=[dp(10), dp(8), dp(10), dp(8)], spacing=dp(5)
+        )
+        with card.canvas.before:
+            Color(1, 1, 1, 1)
+            bg = RoundedRectangle(pos=card.pos, size=card.size, radius=[dp(10)])
+        card.bind(pos=lambda widget, value: setattr(bg, "pos", value))
+        card.bind(size=lambda widget, value: setattr(bg, "size", value))
+        status = "OUT OF STOCK" if int(product["stock"]) <= 0 else (
+            "LOW STOCK" if int(product["stock"]) <= LOW_STOCK_THRESHOLD else "IN STOCK"
+        )
+        title = Label(
+            text=f"[b]{product['name']}[/b]  •  {status}",
+            markup=True, size_hint_y=None, height=dp(26),
+            color=(0.07, 0.19, 0.23, 1), font_size="14sp",
+            halign="left", valign="middle", text_size=(Window.width - dp(70), None)
+        )
+        details = GridLayout(cols=2, rows=2, spacing=dp(4), size_hint_y=None, height=dp(66))
+        fields = [
+            ("CATEGORY", str(product["category"] or "GENERAL")),
+            ("COST PRICE", money(product["purchase_price"])),
+            ("SELL PRICE", money(product["sale_price"])),
+            ("QUANTITY", str(product["stock"]))
+        ]
+        for label, value in fields:
+            cell = Label(
+                text=f"[color=64777d]{label}[/color]  [b]{value}[/b]",
+                markup=True, color=(0.12, 0.22, 0.25, 1), font_size="11sp",
+                halign="left", valign="middle", text_size=(Window.width / 2 - dp(40), None)
+            )
+            details.add_widget(cell)
+        card.add_widget(title)
+        card.add_widget(details)
+        return card
+
+    def refresh(self):
+        container = self.ids.stock_rows
+        container.clear_widgets()
+        all_rows = list(App.get_running_app().store.products(order="name"))
+        selected = self.active_filter
+        if selected == "Newest product":
+            all_rows.sort(key=lambda p: (p["created_at"] or "", int(p["id"])), reverse=True)
+        elif selected == "Old products":
+            all_rows.sort(key=lambda p: (p["created_at"] or "", int(p["id"])))
+        elif selected == "Low stock products":
+            all_rows = [p for p in all_rows if int(p["stock"]) <= LOW_STOCK_THRESHOLD]
+        elif selected == "Discounted products":
+            all_rows = [p for p in all_rows if float(p["discount_percent"] or 0) > 0]
+        elif selected != "All products":
+            all_rows = [p for p in all_rows if str(p["category"] or "GENERAL").casefold() == selected.casefold()]
+
+        if not all_rows:
+            container.add_widget(Label(
+                text="No products match this filter.", size_hint_y=None, height=dp(80),
+                color=(0.14, 0.22, 0.25, 1), font_size="14sp"
+            ))
             return
-        blocks = []
-        for p in rows:
-            status = "OUT OF STOCK" if p["stock"] <= 0 else ("LOW STOCK" if p["stock"] <= LOW_STOCK_THRESHOLD else "IN STOCK")
-            offer = ""
-            if float(p["discount_percent"] or 0) > 0:
-                offer = f"\nOffer: {p['discount_percent']:g}% | Qty {p['discount_min_qty']}+ | {p['discount_start_date']} to {p['discount_end_date']}"
-                try:
-                    active = datetime.strptime(p["discount_start_date"], "%Y-%m-%d").date() <= today <= datetime.strptime(p["discount_end_date"], "%Y-%m-%d").date()
-                except ValueError:
-                    active = False
-                offer += " | ACTIVE" if active else " | NOT ACTIVE"
-            blocks.append(f"ID {p['id']} • {p['name']}\nCategory: {p['category']} | {status}\nStock: {p['stock']} | Cost: {money(p['purchase_price'])} | Sale: {money(p['sale_price'])}{offer}")
-        self.listing_text = "\n\n".join(blocks)
+
+        grouped = {}
+        for product in all_rows:
+            category = str(product["category"] or "GENERAL").upper()
+            grouped.setdefault(category, []).append(product)
+        for category in sorted(grouped, key=str.casefold):
+            header = Label(
+                text=f"[b]{category}[/b]  •  {len(grouped[category])} product(s)",
+                markup=True, size_hint_y=None, height=dp(32),
+                color=(0.055, 0.34, 0.42, 1), font_size="14sp",
+                halign="left", valign="middle", text_size=(Window.width - dp(35), None)
+            )
+            container.add_widget(header)
+            for product in grouped[category]:
+                container.add_widget(self._make_product_card(product))
 
 
 class SaleScreen(Screen):
@@ -1138,7 +1268,7 @@ class SaleScreen(Screen):
             received_amount = float(received or 0)
             if received_amount < 0:
                 raise ValueError("Received amount negative nahi ho sakti.")
-            customer = self.ids.customer.text.strip() or "Walk-in"
+            customer = "Walk-in"
             phone = self.ids.phone.text.strip()
             store = App.get_running_app().store
             net_expected = round(subtotal - discount, 2)
@@ -1150,12 +1280,14 @@ class SaleScreen(Screen):
             for item in items:
                 item["discount_amount"] = self._item_discount(item, today)
             invoice_path = App.get_running_app().generate_invoice(sale_id, customer, phone, items, subtotal, discount, net, credited_paid, due, change)
-            popup.dismiss(); self.cart = []; self.ids.customer.text = ""; self.ids.phone.text = ""; self.update_cart()
+            popup.dismiss(); self.cart = []; self.ids.phone.text = ""; self.update_cart()
             App.get_running_app().refresh_home()
             message = f"Sale #{sale_id} saved successfully.\nSubtotal: {money(subtotal)}\nDiscount: {money(discount)}\nPayable: {money(net)}\nAmount tendered: {money(received_amount)}\nChange to return: {money(change)}\nOutstanding due: {money(due)}"
             if invoice_path: message += f"\n\nInvoice saved at:\n{invoice_path}"
-            show_message(message, "Sale completed")
-        except (ValueError, sqlite3.Error) as exc: show_message(str(exc), "Sale not saved")
+            Clock.schedule_once(lambda _dt, text=message: show_message(text, "Sale completed"), 0.25)
+        except (ValueError, sqlite3.Error) as exc:
+            popup.dismiss()
+            Clock.schedule_once(lambda _dt, text=str(exc): show_message(text, "Sale not saved"), 0.25)
 
 
 class ExpensesScreen(Screen):
