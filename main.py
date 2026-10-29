@@ -358,6 +358,24 @@ KV = r'''
             background_color: (0.88, 0.94, 0.95, 1)
             color: (0.07, 0.26, 0.31, 1)
             on_text: root.set_filter(self.text)
+        GridLayout:
+            cols: 2
+            spacing: dp(7)
+            size_hint_y: None
+            height: dp(104)
+            Field:
+                id: stock_product_name
+                hint_text: 'Product name to update'
+            Field:
+                id: stock_add_qty
+                hint_text: 'Add stock quantity'
+                input_filter: 'int'
+            PrimaryButton:
+                text: 'Add Stock'
+                on_release: root.add_stock()
+            SecondaryButton:
+                text: 'Refresh Stock List'
+                on_release: root.refresh()
         ScrollView:
             do_scroll_x: False
             Label:
@@ -819,6 +837,19 @@ class Store:
             return rows
         return self.conn.execute("SELECT * FROM products WHERE name LIKE ? ORDER BY name LIMIT 20", (f"%{q}%",)).fetchall()
 
+    def add_stock(self, name, quantity):
+        name = (name or "").strip()
+        if not name:
+            raise ValueError("Product name enter karein.")
+        if quantity <= 0:
+            raise ValueError("Add stock quantity 1 ya us se zyada honi chahiye.")
+        matches = self.find_products(name)
+        if not matches or matches[0]["name"].casefold() != name.casefold():
+            raise ValueError("Exact saved product name enter karein.")
+        with self.conn:
+            self.conn.execute("UPDATE products SET stock=stock+? WHERE id=?", (quantity, matches[0]["id"]))
+        return matches[0]["id"]
+
     def add_product(self, name, category, purchase, sale, stock, discount_percent=0,
                     discount_start_date="", discount_end_date="", discount_min_qty=0):
         name = name.strip()
@@ -973,6 +1004,19 @@ class StockScreen(Screen):
 
     def set_filter(self, value):
         self.refresh(value)
+
+    def add_stock(self):
+        try:
+            name = self.ids.stock_product_name.text.strip()
+            quantity = int(self.ids.stock_add_qty.text or 0)
+            pid = App.get_running_app().store.add_stock(name, quantity)
+            self.ids.stock_product_name.text = ""
+            self.ids.stock_add_qty.text = ""
+            self.refresh()
+            App.get_running_app().refresh_home()
+            show_message(f"Stock updated for product ID {pid}.", "Stock updated")
+        except (ValueError, sqlite3.Error) as exc:
+            show_message(str(exc), "Unable to update stock")
 
     def refresh(self, selected=None):
         selected = selected or self.ids.stock_filter.text
