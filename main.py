@@ -214,8 +214,8 @@ KV = r'''
 <ProductsScreen>:
     BoxLayout:
         orientation: 'vertical'
-        padding: [dp(13), dp(48), dp(13), dp(104)]
-        spacing: dp(8)
+        padding: [dp(16), dp(48), dp(16), dp(104)]
+        spacing: dp(12)
         canvas.before:
             Color:
                 rgba: (0.955, 0.972, 0.978, 1)
@@ -232,7 +232,40 @@ KV = r'''
             PageHeading:
                 text: 'Products & Inventory'
         HintText:
-            text: 'Add products, update stock and view stock alerts.'
+            text: 'Add new products or manage saved inventory separately.'
+        PrimaryButton:
+            text: '＋  Add Products'
+            on_release: app.go('add_products')
+        PrimaryButton:
+            text: '▦  Stock Management'
+            on_release: app.go('stock')
+        Widget:
+        SecondaryButton:
+            text: 'Back to Dashboard'
+            on_release: app.go('home')
+
+<AddProductScreen>:
+    BoxLayout:
+        orientation: 'vertical'
+        padding: [dp(13), dp(48), dp(13), dp(104)]
+        spacing: dp(8)
+        canvas.before:
+            Color:
+                rgba: (0.955, 0.972, 0.978, 1)
+            Rectangle:
+                pos: self.pos
+                size: self.size
+        BoxLayout:
+            size_hint_y: None
+            height: dp(46)
+            spacing: dp(9)
+            BackArrowButton:
+                text: '‹'
+                on_release: app.go('products')
+            PageHeading:
+                text: 'Add Products'
+        HintText:
+            text: 'Saved products automatically appear in Stock Management.'
         ScrollView:
             do_scroll_x: False
             BoxLayout:
@@ -261,13 +294,13 @@ KV = r'''
                         input_filter: 'float'
                     Field:
                         id: stock
-                        hint_text: 'Opening/add stock'
+                        hint_text: 'Opening stock quantity'
                         input_filter: 'int'
                     PrimaryButton:
-                        text: 'Add / Update Stock'
+                        text: 'Save Product'
                         on_release: root.add_product()
                 Label:
-                    text: '[b]SAVED PRODUCTS & STOCK ALERTS[/b]'
+                    text: '[b]OPTIONAL QUANTITY DISCOUNT[/b]'
                     markup: True
                     size_hint_y: None
                     height: dp(28)
@@ -275,19 +308,71 @@ KV = r'''
                     color: (0.12, 0.25, 0.29, 1)
                     halign: 'left'
                     text_size: self.size
-                Label:
-                    id: listing
-                    text: root.listing_text
-                    size_hint_y: None
-                    height: max(dp(120), self.texture_size[1] + dp(24))
-                    text_size: self.width, None
-                    halign: 'left'
-                    valign: 'top'
-                    color: (0.14, 0.22, 0.25, 1)
-                    font_size: '13sp'
+                Field:
+                    id: discount_percent
+                    hint_text: 'Discount percentage (e.g. 10)'
+                    input_filter: 'float'
+                Field:
+                    id: discount_start
+                    hint_text: 'Start date (YYYY-MM-DD)'
+                Field:
+                    id: discount_end
+                    hint_text: 'Expiry date (YYYY-MM-DD)'
+                Field:
+                    id: discount_qty
+                    hint_text: 'Minimum qualifying quantity'
+                    input_filter: 'int'
+                HintText:
+                    text: 'If discount is set, start date, expiry date and quantity are required.'
         SecondaryButton:
-            text: 'Back to Dashboard'
-            on_release: app.go('home')
+            text: 'Back to Products & Inventory'
+            on_release: app.go('products')
+
+<StockScreen>:
+    BoxLayout:
+        orientation: 'vertical'
+        padding: [dp(13), dp(48), dp(13), dp(104)]
+        spacing: dp(8)
+        canvas.before:
+            Color:
+                rgba: (0.955, 0.972, 0.978, 1)
+            Rectangle:
+                pos: self.pos
+                size: self.size
+        BoxLayout:
+            size_hint_y: None
+            height: dp(46)
+            spacing: dp(9)
+            BackArrowButton:
+                text: '‹'
+                on_release: app.go('products')
+            PageHeading:
+                text: 'Stock Management'
+        Spinner:
+            id: stock_filter
+            text: 'Newest product'
+            values: ['Newest product', 'Old products', 'Low stock products', 'Discounted product']
+            size_hint_y: None
+            height: dp(48)
+            background_normal: ''
+            background_color: (0.88, 0.94, 0.95, 1)
+            color: (0.07, 0.26, 0.31, 1)
+            on_text: root.set_filter(self.text)
+        ScrollView:
+            do_scroll_x: False
+            Label:
+                id: stock_listing
+                text: root.listing_text
+                size_hint_y: None
+                height: max(dp(160), self.texture_size[1] + dp(24))
+                text_size: self.width, None
+                halign: 'left'
+                valign: 'top'
+                color: (0.14, 0.22, 0.25, 1)
+                font_size: '13sp'
+        SecondaryButton:
+            text: 'Back to Products & Inventory'
+            on_release: app.go('products')
 
 <SaleScreen>:
     BoxLayout:
@@ -667,7 +752,11 @@ class Store:
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
             category TEXT NOT NULL DEFAULT 'GENERAL', purchase_price REAL NOT NULL DEFAULT 0,
             sale_price REAL NOT NULL DEFAULT 0, stock INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT ''
+            created_at TEXT NOT NULL DEFAULT '',
+            discount_percent REAL NOT NULL DEFAULT 0,
+            discount_start_date TEXT NOT NULL DEFAULT '',
+            discount_end_date TEXT NOT NULL DEFAULT '',
+            discount_min_qty INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS sales(
             id INTEGER PRIMARY KEY AUTOINCREMENT, customer_name TEXT, customer_phone TEXT,
@@ -695,7 +784,11 @@ class Store:
         for column, definition in (("category", "TEXT NOT NULL DEFAULT 'GENERAL'"),
                                    ("purchase_price", "REAL NOT NULL DEFAULT 0"),
                                    ("sale_price", "REAL NOT NULL DEFAULT 0"), ("stock", "INTEGER NOT NULL DEFAULT 0"),
-                                   ("created_at", "TEXT NOT NULL DEFAULT ''")):
+                                   ("created_at", "TEXT NOT NULL DEFAULT ''"),
+                                    ("discount_percent", "REAL NOT NULL DEFAULT 0"),
+                                    ("discount_start_date", "TEXT NOT NULL DEFAULT ''"),
+                                    ("discount_end_date", "TEXT NOT NULL DEFAULT ''"),
+                                    ("discount_min_qty", "INTEGER NOT NULL DEFAULT 0")):
             self._add_column("products", column, definition)
         for column, definition in (("customer_name", "TEXT"), ("customer_phone", "TEXT"),
                                    ("discount", "REAL NOT NULL DEFAULT 0"), ("net_amount", "REAL NOT NULL DEFAULT 0"),
@@ -711,8 +804,11 @@ class Store:
         self.conn.execute("UPDATE sales SET status=CASE WHEN balance<=0 THEN 'PAID' ELSE 'DUE' END WHERE status IS NULL OR status=''")
         self.conn.commit()
 
-    def products(self):
-        return self.conn.execute("SELECT * FROM products ORDER BY name COLLATE NOCASE").fetchall()
+    def products(self, order="name"):
+        ordering = {"newest": "created_at DESC, id DESC", "oldest": "created_at ASC, id ASC",
+                    "low": "stock ASC, name COLLATE NOCASE", "discounted": "name COLLATE NOCASE",
+                    "name": "name COLLATE NOCASE"}.get(order, "name COLLATE NOCASE")
+        return self.conn.execute(f"SELECT * FROM products ORDER BY {ordering}").fetchall()
 
     def find_products(self, query):
         q = (query or "").strip()
@@ -723,22 +819,40 @@ class Store:
             return rows
         return self.conn.execute("SELECT * FROM products WHERE name LIKE ? ORDER BY name LIMIT 20", (f"%{q}%",)).fetchall()
 
-    def add_product(self, name, category, purchase, sale, stock):
+    def add_product(self, name, category, purchase, sale, stock, discount_percent=0,
+                    discount_start_date="", discount_end_date="", discount_min_qty=0):
         name = name.strip()
         if not name:
             raise ValueError("Product name enter karein.")
         if purchase < 0 or sale < 0 or stock < 0:
             raise ValueError("Prices aur stock negative nahi ho sakte.")
+        if discount_percent < 0 or discount_percent >= 100:
+            raise ValueError("Discount 0 se zyada aur 100% se kam hona chahiye.")
+        if discount_percent:
+            if not discount_start_date or not discount_end_date or discount_min_qty <= 0:
+                raise ValueError("Discount ke liye start date, expiry date aur minimum quantity lazmi hain.")
+            try:
+                start = datetime.strptime(discount_start_date, "%Y-%m-%d").date()
+                end = datetime.strptime(discount_end_date, "%Y-%m-%d").date()
+            except ValueError:
+                raise ValueError("Dates YYYY-MM-DD format mein enter karein.")
+            if end < start:
+                raise ValueError("Expiry date start date se pehle nahi ho sakti.")
+        else:
+            discount_start_date = discount_end_date = ""
+            discount_min_qty = 0
         category = detect_category(name, category)
         with self.conn:
-            existing = self.conn.execute("SELECT id,stock FROM products WHERE LOWER(name)=LOWER(?)", (name,)).fetchone()
+            existing = self.conn.execute("SELECT id FROM products WHERE LOWER(name)=LOWER(?)", (name,)).fetchone()
             now = datetime.now().isoformat(timespec="seconds")
             if existing:
-                self.conn.execute("UPDATE products SET category=?,purchase_price=?,sale_price=?,stock=stock+? WHERE id=?",
-                                  (category, purchase, sale, stock, existing["id"]))
+                self.conn.execute("""UPDATE products SET category=?,purchase_price=?,sale_price=?,stock=stock+?,
+                    discount_percent=?,discount_start_date=?,discount_end_date=?,discount_min_qty=? WHERE id=?""",
+                    (category, purchase, sale, stock, discount_percent, discount_start_date, discount_end_date, discount_min_qty, existing["id"]))
                 return existing["id"]
-            cur = self.conn.execute("INSERT INTO products(name,category,purchase_price,sale_price,stock,created_at) VALUES(?,?,?,?,?,?)",
-                                    (name, category, purchase, sale, stock, now))
+            cur = self.conn.execute("""INSERT INTO products(name,category,purchase_price,sale_price,stock,created_at,
+                discount_percent,discount_start_date,discount_end_date,discount_min_qty) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (name, category, purchase, sale, stock, now, discount_percent, discount_start_date, discount_end_date, discount_min_qty))
             return cur.lastrowid
 
     def create_sale(self, customer, phone, items, subtotal, discount, paid):
@@ -821,18 +935,16 @@ class MainScreen(Screen):
 
 
 class ProductsScreen(Screen):
-    listing_text = StringProperty("")
-    def on_pre_enter(self, *args): self.refresh()
-    def refresh(self):
-        rows = App.get_running_app().store.products()
-        if not rows:
-            self.listing_text = "No products yet. Add your first product above."
-            return
-        blocks = []
-        for p in rows:
-            status = "OUT OF STOCK" if p["stock"] <= 0 else ("LOW STOCK" if p["stock"] <= LOW_STOCK_THRESHOLD else "IN STOCK")
-            blocks.append(f"ID {p['id']} • {p['name']}\nCategory: {p['category']} | {status}\nStock: {p['stock']} | Cost: {money(p['purchase_price'])} | Sale: {money(p['sale_price'])}")
-        self.listing_text = "\n\n".join(blocks)
+    """Navigation hub for product entry and stock management."""
+
+
+class AddProductScreen(Screen):
+    def on_pre_enter(self, *args):
+        for key in ("pname", "pcategory", "purchase", "saleprice", "stock",
+                    "discount_percent", "discount_start", "discount_end", "discount_qty"):
+            if key in self.ids:
+                self.ids[key].text = ""
+
     def add_product(self):
         try:
             name = self.ids.pname.text.strip()
@@ -840,11 +952,54 @@ class ProductsScreen(Screen):
             purchase = float(self.ids.purchase.text or 0)
             sale = float(self.ids.saleprice.text or 0)
             stock = int(self.ids.stock.text or 0)
-            pid = App.get_running_app().store.add_product(name, category, purchase, sale, stock)
-            for key in ("pname", "pcategory", "purchase", "saleprice", "stock"): self.ids[key].text = ""
-            self.refresh(); App.get_running_app().refresh_home()
-            show_message(f"Product saved/updated. Product ID: {pid}\nCategory: {detect_category(name, category)}", "Saved")
-        except (ValueError, sqlite3.Error) as exc: show_message(str(exc), "Check product details")
+            pct = float(self.ids.discount_percent.text or 0)
+            start = self.ids.discount_start.text.strip()
+            end = self.ids.discount_end.text.strip()
+            qty = int(self.ids.discount_qty.text or 0)
+            pid = App.get_running_app().store.add_product(name, category, purchase, sale, stock, pct, start, end, qty)
+            App.get_running_app().refresh_home()
+            App.get_running_app().root.get_screen("stock").refresh()
+            show_message(f"Product saved successfully.\nProduct ID: {pid}\nAvailable in Stock Management and checkout.", "Product saved")
+            self.on_pre_enter()
+        except (ValueError, sqlite3.Error) as exc:
+            show_message(str(exc), "Check product details")
+
+
+class StockScreen(Screen):
+    listing_text = StringProperty("")
+
+    def on_pre_enter(self, *args):
+        self.refresh()
+
+    def set_filter(self, value):
+        self.refresh(value)
+
+    def refresh(self, selected=None):
+        selected = selected or self.ids.stock_filter.text
+        order = {"Newest product": "newest", "Old products": "oldest",
+                 "Low stock products": "low", "Discounted product": "discounted"}.get(selected, "newest")
+        rows = App.get_running_app().store.products(order=order)
+        today = datetime.now().date()
+        if selected == "Low stock products":
+            rows = [p for p in rows if int(p["stock"]) <= LOW_STOCK_THRESHOLD]
+        elif selected == "Discounted product":
+            rows = [p for p in rows if float(p["discount_percent"] or 0) > 0]
+        if not rows:
+            self.listing_text = "No products match this filter."
+            return
+        blocks = []
+        for p in rows:
+            status = "OUT OF STOCK" if p["stock"] <= 0 else ("LOW STOCK" if p["stock"] <= LOW_STOCK_THRESHOLD else "IN STOCK")
+            offer = ""
+            if float(p["discount_percent"] or 0) > 0:
+                offer = f"\nOffer: {p['discount_percent']:g}% | Qty {p['discount_min_qty']}+ | {p['discount_start_date']} to {p['discount_end_date']}"
+                try:
+                    active = datetime.strptime(p["discount_start_date"], "%Y-%m-%d").date() <= today <= datetime.strptime(p["discount_end_date"], "%Y-%m-%d").date()
+                except ValueError:
+                    active = False
+                offer += " | ACTIVE" if active else " | NOT ACTIVE"
+            blocks.append(f"ID {p['id']} • {p['name']}\nCategory: {p['category']} | {status}\nStock: {p['stock']} | Cost: {money(p['purchase_price'])} | Sale: {money(p['sale_price'])}{offer}")
+        self.listing_text = "\n\n".join(blocks)
 
 
 class SaleScreen(Screen):
@@ -881,17 +1036,35 @@ class SaleScreen(Screen):
         if product["stock"] < already + qty:
             show_message(f"{product['name']} ka available stock {product['stock']} hai.", "Insufficient stock"); return
         if existing: existing["quantity"] += qty
-        else: self.cart.append({"product_id": product["id"], "name": product["name"], "category": detect_category(product["name"], product["category"]), "quantity": qty, "price": float(product["sale_price"]), "purchase_price": float(product["purchase_price"])})
+        else: self.cart.append({"product_id": product["id"], "name": product["name"], "category": detect_category(product["name"], product["category"]), "quantity": qty, "price": float(product["sale_price"]), "purchase_price": float(product["purchase_price"]), "discount_percent": float(product.get("discount_percent", 0) or 0), "discount_start_date": product.get("discount_start_date", ""), "discount_end_date": product.get("discount_end_date", ""), "discount_min_qty": int(product.get("discount_min_qty", 0) or 0)})
         self.ids.product_name.text = ""; self.ids.quantity.text = ""; self.update_cart()
     def subtotal(self): return round(sum(i["quantity"] * i["price"] for i in self.cart), 2)
+    def product_discount_amount(self):
+        today = datetime.now().date()
+        total = 0.0
+        for item in self.cart:
+            pct = float(item.get("discount_percent", 0) or 0)
+            if pct <= 0 or item["quantity"] < int(item.get("discount_min_qty", 0) or 0):
+                continue
+            try:
+                start = datetime.strptime(item.get("discount_start_date", ""), "%Y-%m-%d").date()
+                end = datetime.strptime(item.get("discount_end_date", ""), "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            if start <= today <= end:
+                total += item["quantity"] * item["price"] * pct / 100
+        return round(min(self.subtotal(), total), 2)
     def discount_amount(self):
-        subtotal = self.subtotal(); mode = self.ids.discount_mode.text
+        subtotal = self.subtotal()
+        automatic = self.product_discount_amount()
+        mode = self.ids.discount_mode.text
         try: value = float(self.ids.discount_value.text or 0)
-        except ValueError: return 0
-        if mode == "Off": return 0
-        if value < 0: return 0
-        if mode == "Percentage": return round(min(subtotal, subtotal * min(value, 100) / 100), 2)
-        return round(min(subtotal, value), 2)
+        except ValueError: value = 0
+        manual = 0
+        if mode != "Off" and value >= 0:
+            if mode == "Percentage": manual = round(min(subtotal, subtotal * min(value, 100) / 100), 2)
+            else: manual = round(min(subtotal, value), 2)
+        return round(min(subtotal, automatic + manual), 2)
     def update_cart(self):
         if not self.cart: self.cart_text = "Cart is empty. Add a product by name."
         else:
@@ -1006,7 +1179,7 @@ class MaherUmarPOSApp(App):
         self.store = Store(os.path.join(self.user_data_dir, DB_NAME))
         Builder.load_string(KV)
         manager = ScreenManager()
-        manager.add_widget(MainScreen(name="home")); manager.add_widget(ProductsScreen(name="products")); manager.add_widget(SaleScreen(name="sale")); manager.add_widget(ExpensesScreen(name="expenses")); manager.add_widget(ReportsScreen(name="reports")); manager.add_widget(HistoryScreen(name="history")); manager.add_widget(UdhaarScreen(name="udhaar"))
+        manager.add_widget(MainScreen(name="home")); manager.add_widget(ProductsScreen(name="products")); manager.add_widget(AddProductScreen(name="add_products")); manager.add_widget(StockScreen(name="stock")); manager.add_widget(SaleScreen(name="sale")); manager.add_widget(ExpensesScreen(name="expenses")); manager.add_widget(ReportsScreen(name="reports")); manager.add_widget(HistoryScreen(name="history")); manager.add_widget(UdhaarScreen(name="udhaar"))
         return manager
     def go(self, screen_name):
         self.root.current = screen_name
