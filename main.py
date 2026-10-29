@@ -447,31 +447,8 @@ KV = r'''
                     valign: 'top'
                     color: (0.12, 0.22, 0.25, 1)
                     font_size: '13sp'
-                Label:
-                    text: 'Discount'
-                    size_hint_y: None
-                    height: dp(24)
-                    halign: 'left'
-                    color: (0.12, 0.22, 0.25, 1)
-                    text_size: self.size
-                GridLayout:
-                    cols: 2
-                    spacing: dp(7)
-                    size_hint_y: None
-                    height: dp(48)
-                    Spinner:
-                        id: discount_mode
-                        text: 'Off'
-                        values: ['Off', 'Percentage', 'Fixed amount']
-                        background_normal: ''
-                        background_color: (0.88, 0.94, 0.95, 1)
-                        color: (0.07, 0.26, 0.31, 1)
-                        on_text: root.update_cart()
-                    Field:
-                        id: discount_value
-                        hint_text: 'Discount value'
-                        input_filter: 'float'
-                        on_text: root.update_cart()
+                HintText:
+                    text: 'Product discounts apply automatically when the quantity and date rules are met.'
                 Label:
                     id: total_label
                     text: root.total_text
@@ -875,12 +852,9 @@ class Store:
         category = detect_category(name, category)
         with self.conn:
             existing = self.conn.execute("SELECT id FROM products WHERE LOWER(name)=LOWER(?)", (name,)).fetchone()
-            now = datetime.now().isoformat(timespec="seconds")
             if existing:
-                self.conn.execute("""UPDATE products SET category=?,purchase_price=?,sale_price=?,stock=stock+?,
-                    discount_percent=?,discount_start_date=?,discount_end_date=?,discount_min_qty=? WHERE id=?""",
-                    (category, purchase, sale, stock, discount_percent, discount_start_date, discount_end_date, discount_min_qty, existing["id"]))
-                return existing["id"]
+                raise ValueError("Yeh product pehle se saved hai. Quantity barhane ke liye Stock Management use karein.")
+            now = datetime.now().isoformat(timespec="seconds")
             cur = self.conn.execute("""INSERT INTO products(name,category,purchase_price,sale_price,stock,created_at,
                 discount_percent,discount_start_date,discount_end_date,discount_min_qty) VALUES(?,?,?,?,?,?,?,?,?,?)""",
                 (name, category, purchase, sale, stock, now, discount_percent, discount_start_date, discount_end_date, discount_min_qty))
@@ -1083,36 +1057,42 @@ class SaleScreen(Screen):
         else: self.cart.append({"product_id": product["id"], "name": product["name"], "category": detect_category(product["name"], product["category"]), "quantity": qty, "price": float(product["sale_price"]), "purchase_price": float(product["purchase_price"]), "discount_percent": float(product.get("discount_percent", 0) or 0), "discount_start_date": product.get("discount_start_date", ""), "discount_end_date": product.get("discount_end_date", ""), "discount_min_qty": int(product.get("discount_min_qty", 0) or 0)})
         self.ids.product_name.text = ""; self.ids.quantity.text = ""; self.update_cart()
     def subtotal(self): return round(sum(i["quantity"] * i["price"] for i in self.cart), 2)
+    @staticmethod
+    def _item_discount(item, today=None):
+        today = today or datetime.now().date()
+        pct = float(item.get("discount_percent", 0) or 0)
+        minimum = int(item.get("discount_min_qty", 0) or 0)
+        if pct <= 0 or minimum <= 0 or int(item["quantity"]) < minimum:
+            return 0.0
+        try:
+            start = datetime.strptime(item.get("discount_start_date", ""), "%Y-%m-%d").date()
+            end = datetime.strptime(item.get("discount_end_date", ""), "%Y-%m-%d").date()
+        except (TypeError, ValueError):
+            return 0.0
+        if not start <= today <= end:
+            return 0.0
+        return round(int(item["quantity"]) * float(item["price"]) * pct / 100, 2)
+
     def product_discount_amount(self):
         today = datetime.now().date()
-        total = 0.0
-        for item in self.cart:
-            pct = float(item.get("discount_percent", 0) or 0)
-            if pct <= 0 or item["quantity"] < int(item.get("discount_min_qty", 0) or 0):
-                continue
-            try:
-                start = datetime.strptime(item.get("discount_start_date", ""), "%Y-%m-%d").date()
-                end = datetime.strptime(item.get("discount_end_date", ""), "%Y-%m-%d").date()
-            except ValueError:
-                continue
-            if start <= today <= end:
-                total += item["quantity"] * item["price"] * pct / 100
-        return round(min(self.subtotal(), total), 2)
+        return round(min(self.subtotal(), sum(self._item_discount(item, today) for item in self.cart)), 2)
+
     def discount_amount(self):
-        subtotal = self.subtotal()
-        automatic = self.product_discount_amount()
-        mode = self.ids.discount_mode.text
-        try: value = float(self.ids.discount_value.text or 0)
-        except ValueError: value = 0
-        manual = 0
-        if mode != "Off" and value >= 0:
-            if mode == "Percentage": manual = round(min(subtotal, subtotal * min(value, 100) / 100), 2)
-            else: manual = round(min(subtotal, value), 2)
-        return round(min(subtotal, automatic + manual), 2)
+        # Product promotions are calculated by the app; no manual checkout discount is needed.
+        return self.product_discount_amount()
     def update_cart(self):
         if not self.cart: self.cart_text = "Cart is empty. Add a product by name."
         else:
-            self.cart_text = "\n\n".join(f"{i+1}. {x['name']} ({x['category']})\n   Qty {x['quantity']} × {money(x['price'])} = {money(x['quantity']*x['price'])}" for i,x in enumerate(self.cart))
+            today = datetime.now().date()
+            lines = []
+            for i, item in enumerate(self.cart):
+                line_total = item["quantity"] * item["price"]
+                item_discount = self._item_discount(item, today)
+                line = f"{i+1}. {item['name']} ({item['category']})\n   Qty {item['quantity']} × {money(item['price'])} = {money(line_total)}"
+                if item_discount:
+                    line += f"\n   Automatic product discount: −{money(item_discount)}"
+                lines.append(line)
+            self.cart_text = "\n\n".join(lines)
         sub = self.subtotal(); disc = self.discount_amount()
         self.total_text = f"Subtotal: {money(sub)}   Discount: {money(disc)}\nFinal payable: {money(max(0, sub-disc))}"
     def remove_last_item(self):
@@ -1151,8 +1131,11 @@ class SaleScreen(Screen):
             credited_paid = min(received_amount, net_expected)
             sale_id, net, due = store.create_sale(customer, phone, self.cart, subtotal, discount, credited_paid)
             items = [dict(x) for x in self.cart]
+            today = datetime.now().date()
+            for item in items:
+                item["discount_amount"] = self._item_discount(item, today)
             invoice_path = App.get_running_app().generate_invoice(sale_id, customer, phone, items, subtotal, discount, net, credited_paid, due, change)
-            popup.dismiss(); self.cart = []; self.ids.customer.text = ""; self.ids.phone.text = ""; self.ids.discount_value.text = ""; self.ids.discount_mode.text = "Off"; self.update_cart()
+            popup.dismiss(); self.cart = []; self.ids.customer.text = ""; self.ids.phone.text = ""; self.update_cart()
             App.get_running_app().refresh_home()
             message = f"Sale #{sale_id} saved successfully.\nSubtotal: {money(subtotal)}\nDiscount: {money(discount)}\nPayable: {money(net)}\nAmount tendered: {money(received_amount)}\nChange to return: {money(change)}\nOutstanding due: {money(due)}"
             if invoice_path: message += f"\n\nInvoice saved at:\n{invoice_path}"
@@ -1242,6 +1225,9 @@ class MaherUmarPOSApp(App):
         for item in items:
             lines.append(f"{item['name']} ({item['category']})")
             lines.append(f"  {item['quantity']} x {money(item['price'])} = {money(item['quantity']*item['price'])}")
+            item_discount = float(item.get("discount_amount", 0) or 0)
+            if item_discount:
+                lines.append(f"  Automatic product discount: -{money(item_discount)}")
         lines += ["-"*48, f"Subtotal: {money(subtotal)}", f"Discount: {money(discount)}", f"FINAL PAYABLE: {money(net)}", f"Amount received: {money(paid)}", f"Change returned: {money(change)}", f"Balance due: {money(due)}", "Thank you for shopping with us!"]
         # Use a standard Helvetica font and escape PDF string literals.
         def esc(value):
