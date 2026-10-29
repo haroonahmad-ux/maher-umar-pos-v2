@@ -152,7 +152,7 @@ KV = r'''
                     cols: 2
                     spacing: dp(8)
                     size_hint_y: None
-                    height: dp(204)
+                    height: dp(272)
                     PrimaryButton:
                         text: 'Add Products'
                         on_release: app.go('add_products')
