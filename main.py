@@ -12,6 +12,7 @@ from kivy.app import App
 from kivy.core.window import Window
 from kivy.lang import Builder
 from kivy.metrics import dp
+from kivy.graphics import Color, RoundedRectangle
 from kivy.properties import StringProperty
 from kivy.uix.screenmanager import ScreenManager, Screen
 from kivy.uix.popup import Popup
@@ -213,7 +214,7 @@ KV = r'''
 <ProductsScreen>:
     BoxLayout:
         orientation: 'vertical'
-        padding: [dp(13), dp(26), dp(13), dp(104)]
+        padding: [dp(13), dp(48), dp(13), dp(104)]
         spacing: dp(8)
         canvas.before:
             Color:
@@ -226,7 +227,7 @@ KV = r'''
             height: dp(46)
             spacing: dp(9)
             BackArrowButton:
-                text: '←'
+                text: '‹'
                 on_release: app.go('home')
             PageHeading:
                 text: 'Products & Inventory'
@@ -291,7 +292,7 @@ KV = r'''
 <SaleScreen>:
     BoxLayout:
         orientation: 'vertical'
-        padding: [dp(13), dp(26), dp(13), dp(104)]
+        padding: [dp(13), dp(48), dp(13), dp(104)]
         spacing: dp(8)
         canvas.before:
             Color:
@@ -304,7 +305,7 @@ KV = r'''
             height: dp(46)
             spacing: dp(9)
             BackArrowButton:
-                text: '←'
+                text: '‹'
                 on_release: app.go('home')
             PageHeading:
                 text: 'New Sale / Checkout'
@@ -391,7 +392,7 @@ KV = r'''
 <ExpensesScreen>:
     BoxLayout:
         orientation: 'vertical'
-        padding: [dp(13), dp(26), dp(13), dp(104)]
+        padding: [dp(13), dp(48), dp(13), dp(104)]
         spacing: dp(8)
         canvas.before:
             Color:
@@ -404,7 +405,7 @@ KV = r'''
             height: dp(46)
             spacing: dp(9)
             BackArrowButton:
-                text: '←'
+                text: '‹'
                 on_release: app.go('home')
             PageHeading:
                 text: 'Expenses / Kharcha Book'
@@ -460,7 +461,7 @@ KV = r'''
 <ReportsScreen>:
     BoxLayout:
         orientation: 'vertical'
-        padding: [dp(13), dp(26), dp(13), dp(104)]
+        padding: [dp(13), dp(48), dp(13), dp(104)]
         spacing: dp(8)
         canvas.before:
             Color:
@@ -473,7 +474,7 @@ KV = r'''
             height: dp(46)
             spacing: dp(9)
             BackArrowButton:
-                text: '←'
+                text: '‹'
                 on_release: app.go('home')
             PageHeading:
                 text: 'Reports & Gross Profit'
@@ -498,7 +499,7 @@ KV = r'''
 <HistoryScreen>:
     BoxLayout:
         orientation: 'vertical'
-        padding: [dp(13), dp(26), dp(13), dp(104)]
+        padding: [dp(13), dp(48), dp(13), dp(104)]
         spacing: dp(8)
         canvas.before:
             Color:
@@ -511,7 +512,7 @@ KV = r'''
             height: dp(46)
             spacing: dp(9)
             BackArrowButton:
-                text: '←'
+                text: '‹'
                 on_release: app.go('home')
             PageHeading:
                 text: 'Sales History'
@@ -533,7 +534,7 @@ KV = r'''
 <UdhaarScreen>:
     BoxLayout:
         orientation: 'vertical'
-        padding: [dp(13), dp(26), dp(13), dp(104)]
+        padding: [dp(13), dp(48), dp(13), dp(104)]
         spacing: dp(8)
         canvas.before:
             Color:
@@ -546,7 +547,7 @@ KV = r'''
             height: dp(46)
             spacing: dp(9)
             BackArrowButton:
-                text: '←'
+                text: '‹'
                 on_release: app.go('home')
             PageHeading:
                 text: 'Udhaar Book / Outstanding'
@@ -590,12 +591,26 @@ def detect_category(name, category=""):
     return "GENERAL"
 
 
+class DialogBody(BoxLayout):
+    """Light, high-contrast surface for Android confirmation dialogs."""
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        with self.canvas.before:
+            Color(1, 1, 1, 1)
+            self._dialog_bg = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(12)])
+        self.bind(pos=self._sync_dialog_bg, size=self._sync_dialog_bg)
+
+    def _sync_dialog_bg(self, *_):
+        self._dialog_bg.pos = self.pos
+        self._dialog_bg.size = self.size
+
+
 def show_message(message, title="Maher Umar POS"):
     """High-contrast confirmation dialog with height adapted to the message."""
-    body = BoxLayout(orientation="vertical", padding=[dp(18), dp(14), dp(18), dp(14)], spacing=dp(12))
+    body = DialogBody(orientation="vertical", padding=[dp(18), dp(14), dp(18), dp(14)], spacing=dp(12))
     label = Label(
         text=str(message or ""), color=(0.04, 0.10, 0.12, 1),
-        halign="left", valign="middle", font_size="17sp", bold=True,
+        halign="left", valign="top", font_size="15sp", bold=False,
         size_hint_y=None,
     )
     body.add_widget(label)
@@ -850,7 +865,7 @@ class SaleScreen(Screen):
             self.choose_product(matches, qty); return
         self._add_matched(dict(matches[0]), qty)
     def choose_product(self, matches, qty):
-        box = BoxLayout(orientation="vertical", padding=dp(10), spacing=dp(6))
+        box = DialogBody(orientation="vertical", padding=dp(10), spacing=dp(6))
         pop = Popup(title="Select matching product", content=box, size_hint=(0.92, 0.82),
                     background_color=(1, 1, 1, 1), title_color=(0.08, 0.16, 0.18, 1),
                     separator_color=(0.08, 0.52, 0.30, 1), title_size="18sp")
@@ -890,7 +905,7 @@ class SaleScreen(Screen):
         if not self.cart: show_message("Pehle cart mein product add karein.", "Cart empty"); return
         self.update_cart(); subtotal = self.subtotal(); discount = self.discount_amount(); final = round(subtotal-discount,2)
         if final < 0: show_message("Discount subtotal se zyada nahi ho sakta."); return
-        body = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(8))
+        body = DialogBody(orientation="vertical", padding=dp(12), spacing=dp(8))
         body.add_widget(Label(text=f"Subtotal: {money(subtotal)}\nDiscount: {money(discount)}\nFINAL PAYABLE: {money(final)}", size_hint_y=None, height=dp(95), color=(0.08,0.12,0.14,1), halign="left"))
         received = TextInput(hint_text="Amount received (Rs.)", input_filter="float", multiline=False, size_hint_y=None, height=dp(48), padding=[dp(10),dp(12)])
         body.add_widget(received)

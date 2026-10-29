@@ -1,4 +1,3 @@
-
 [app]
 
 title = POS v2
@@ -7,7 +6,10 @@ package.name = maherumarpos
 
 package.domain = org.maherumar
 
-source.dir = .
+# The workflow creates this isolated directory from main.py before building.
+# Keeping the Java source root outside the repository root avoids Gradle task
+# validation errors caused by generated build outputs being scanned as sources.
+source.dir = .app-source
 
 source.include_exts = py,kv,png,jpg,jpeg,atlas,json,ttf,otf
 
@@ -25,7 +27,7 @@ android.permissions = INTERNET
 # Android SDK and NDK compatibility
 android.api = 36
 android.minapi = 24
-android.ndk = 29
+android.ndk = 28c
 
 # Target architecture
 android.archs = arm64-v8a
@@ -36,9 +38,6 @@ p4a.bootstrap = sdl2
 
 # Accept Android SDK licenses during automated builds
 android.accept_sdk_license = True
-
-# Keep the Android build focused on the required dependencies
-android.add_src =
 
 # Logging
 log_level = 2
