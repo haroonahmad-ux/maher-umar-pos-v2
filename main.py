@@ -1090,8 +1090,9 @@ class StockScreen(Screen):
 
     @staticmethod
     def _make_product_card(product):
+        has_discount = float(product["discount_percent"] or 0) > 0
         card = BoxLayout(
-            orientation="vertical", size_hint_y=None, height=dp(122),
+            orientation="vertical", size_hint_y=None, height=dp(148 if has_discount else 122),
             padding=[dp(10), dp(8), dp(10), dp(8)], spacing=dp(5)
         )
         with card.canvas.before:
@@ -1124,6 +1125,19 @@ class StockScreen(Screen):
             details.add_widget(cell)
         card.add_widget(title)
         card.add_widget(details)
+        if has_discount:
+            def display_date(value):
+                try:
+                    return datetime.strptime(value, "%Y-%m-%d").strftime("%d-%m-%Y")
+                except (TypeError, ValueError):
+                    return value or "—"
+            offer = Label(
+                text=f"[b]OFFER[/b]  {float(product['discount_percent']):g}% off • Qty {int(product['discount_min_qty'])}+ • Until {display_date(product['discount_end_date'])}",
+                markup=True, size_hint_y=None, height=dp(24),
+                color=(0.05, 0.40, 0.30, 1), font_size="11sp",
+                halign="left", valign="middle", text_size=(Window.width - dp(60), None)
+            )
+            card.add_widget(offer)
         return card
 
     def refresh(self):
