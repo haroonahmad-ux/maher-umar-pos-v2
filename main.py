@@ -10,6 +10,7 @@ from datetime import datetime
 
 from kivy.app import App
 from kivy.core.window import Window
+from kivy.clock import Clock
 from kivy.lang import Builder
 from kivy.metrics import dp
 from kivy.graphics import Color, RoundedRectangle
@@ -153,8 +154,11 @@ KV = r'''
                     size_hint_y: None
                     height: dp(204)
                     PrimaryButton:
-                        text: 'Products & Stock'
-                        on_release: app.go('products')
+                        text: 'Add Products'
+                        on_release: app.go('add_products')
+                    PrimaryButton:
+                        text: 'Stock Management'
+                        on_release: app.go('stock')
                     PrimaryButton:
                         text: 'New Sale'
                         on_release: app.go('sale')
@@ -261,11 +265,11 @@ KV = r'''
             spacing: dp(9)
             BackArrowButton:
                 text: '‹'
-                on_release: app.go('products')
+                on_release: app.go('home')
             PageHeading:
                 text: 'Add Products'
         HintText:
-            text: 'Saved products automatically appear in Stock Management.'
+            text: 'Enter product details. Product discount is optional.'
         ScrollView:
             do_scroll_x: False
             BoxLayout:
@@ -286,47 +290,62 @@ KV = r'''
                     height: dp(104)
                     Field:
                         id: purchase
-                        hint_text: 'Purchase price (Rs.)'
+                        hint_text: 'Cost price (Rs.)'
                         input_filter: 'float'
                     Field:
                         id: saleprice
-                        hint_text: 'Sale price (Rs.)'
+                        hint_text: 'Selling price (Rs.)'
                         input_filter: 'float'
                     Field:
                         id: stock
-                        hint_text: 'Opening stock quantity'
+                        hint_text: 'Opening quantity'
                         input_filter: 'int'
-                    PrimaryButton:
-                        text: 'Save Product'
-                        on_release: root.add_product()
-                Label:
-                    text: '[b]OPTIONAL QUANTITY DISCOUNT[/b]'
-                    markup: True
+                    Widget:
+                SecondaryButton:
+                    text: '＋  Add Product Discount (Optional)'
+                    on_release: root.toggle_discount_form()
+                BoxLayout:
+                    id: discount_form
+                    orientation: 'vertical'
                     size_hint_y: None
-                    height: dp(28)
-                    font_size: '14sp'
-                    color: (0.12, 0.25, 0.29, 1)
-                    halign: 'left'
-                    text_size: self.size
-                Field:
-                    id: discount_percent
-                    hint_text: 'Discount percentage (e.g. 10)'
-                    input_filter: 'float'
-                Field:
-                    id: discount_start
-                    hint_text: 'Start date (YYYY-MM-DD)'
-                Field:
-                    id: discount_end
-                    hint_text: 'Expiry date (YYYY-MM-DD)'
-                Field:
-                    id: discount_qty
-                    hint_text: 'Minimum qualifying quantity'
-                    input_filter: 'int'
-                HintText:
-                    text: 'If discount is set, start date, expiry date and quantity are required.'
+                    height: dp(0)
+                    opacity: 0
+                    disabled: True
+                    spacing: dp(7)
+                    Label:
+                        text: '[b]PRODUCT DISCOUNT[/b]'
+                        markup: True
+                        size_hint_y: None
+                        height: dp(25)
+                        font_size: '14sp'
+                        color: (0.12, 0.25, 0.29, 1)
+                        halign: 'left'
+                        text_size: self.size
+                    Field:
+                        id: discount_percent
+                        hint_text: 'Discount percentage (e.g. 10)'
+                        input_filter: 'float'
+                    Field:
+                        id: discount_start
+                        hint_text: 'Start date (automatic)'
+                        readonly: True
+                    Field:
+                        id: discount_end
+                        hint_text: 'Expiry date (DDMM, e.g. 3011)'
+                        input_filter: 'int'
+                        max_text_length: 4
+                    Field:
+                        id: discount_qty
+                        hint_text: 'Minimum qualifying quantity'
+                        input_filter: 'int'
+                    HintText:
+                        text: 'Start date is automatic. Enter expiry as DDMM; current year is added.'
+                PrimaryButton:
+                    text: 'Save Product'
+                    on_release: root.add_product()
         SecondaryButton:
-            text: 'Back to Products & Inventory'
-            on_release: app.go('products')
+            text: 'Back to Dashboard'
+            on_release: app.go('home')
 
 <StockScreen>:
     BoxLayout:
@@ -345,52 +364,51 @@ KV = r'''
             spacing: dp(9)
             BackArrowButton:
                 text: '‹'
-                on_release: app.go('products')
+                on_release: app.go('home')
             PageHeading:
                 text: 'Stock Management'
-        Spinner:
-            id: stock_filter
-            text: 'Newest product'
-            values: ['Newest product', 'Old products', 'Low stock products', 'Discounted product']
+            SecondaryButton:
+                text: '☰'
+                size_hint_x: None
+                width: dp(46)
+                on_release: root.open_filters()
+        Label:
+            text: root.filter_summary
             size_hint_y: None
-            height: dp(48)
-            background_normal: ''
-            background_color: (0.88, 0.94, 0.95, 1)
-            color: (0.07, 0.26, 0.31, 1)
-            on_text: root.set_filter(self.text)
+            height: dp(24)
+            color: (0.39, 0.47, 0.50, 1)
+            font_size: '12sp'
+            halign: 'left'
+            text_size: self.size
         GridLayout:
             cols: 2
             spacing: dp(7)
             size_hint_y: None
-            height: dp(104)
+            height: dp(100)
             Field:
                 id: stock_product_name
-                hint_text: 'Product name to update'
+                hint_text: 'Exact saved product name'
             Field:
                 id: stock_add_qty
-                hint_text: 'Add stock quantity'
+                hint_text: 'Quantity to add'
                 input_filter: 'int'
             PrimaryButton:
                 text: 'Add Stock'
                 on_release: root.add_stock()
             SecondaryButton:
-                text: 'Refresh Stock List'
+                text: 'Refresh'
                 on_release: root.refresh()
         ScrollView:
             do_scroll_x: False
-            Label:
-                id: stock_listing
-                text: root.listing_text
+            BoxLayout:
+                id: stock_rows
+                orientation: 'vertical'
                 size_hint_y: None
-                height: max(dp(160), self.texture_size[1] + dp(24))
-                text_size: self.width, None
-                halign: 'left'
-                valign: 'top'
-                color: (0.14, 0.22, 0.25, 1)
-                font_size: '13sp'
+                height: self.minimum_height
+                spacing: dp(8)
         SecondaryButton:
-            text: 'Back to Products & Inventory'
-            on_release: app.go('products')
+            text: 'Back to Dashboard'
+            on_release: app.go('home')
 
 <SaleScreen>:
     BoxLayout:
@@ -422,14 +440,11 @@ KV = r'''
                 height: self.minimum_height
                 spacing: dp(8)
                 Field:
-                    id: customer
-                    hint_text: 'Customer name (optional)'
-                Field:
                     id: phone
-                    hint_text: 'Customer phone (optional)'
+                    hint_text: 'Customer mobile number (optional)'
                 Field:
                     id: product_name
-                    hint_text: 'Product name (no product ID needed)'
+                    hint_text: 'Product name'
                 Field:
                     id: quantity
                     hint_text: 'Quantity'
