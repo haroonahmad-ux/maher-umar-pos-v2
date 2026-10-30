@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - feat/stock-management-discounts
   pull_request:
     branches:
       - main
@@ -37,6 +38,8 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
+          cache-dependency-path: buildozer.spec
 
       - name: Install system dependencies
         run: |
@@ -66,23 +69,42 @@ jobs:
           python -m pip install \
             "git+https://github.com/kivy/buildozer.git"
 
-      - name: Verify build configuration
+      - name: Verify build configuration and Python syntax
         run: |
           python --version
           java -version
           buildozer --version
           test -f buildozer.spec
           test -f main.py
+          python -m py_compile main.py
 
       - name: Prepare isolated application source
         run: |
           rm -rf .app-source
           mkdir -p .app-source
           cp main.py .app-source/main.py
+          base64 -d app_icon.png.b64 > app_icon.png
+          cp app_icon.png .app-source/app_icon.png
 
-      - name: Build debug APK
+      - name: Build debug APK (retry transient Gradle download failures)
+        shell: bash
         run: |
-          buildozer -v android debug
+          set -o pipefail
+          for attempt in 1 2 3; do
+            echo "APK build attempt ${attempt}/3"
+            if buildozer -v android debug; then
+              exit 0
+            fi
+
+            if [ "${attempt}" -lt 3 ]; then
+              delay=$((attempt * 30))
+              echo "Build failed. Retrying in ${delay} seconds; generated Buildozer/Gradle files will be retained."
+              sleep "${delay}"
+            fi
+          done
+
+          echo "::error::APK build failed after 3 attempts."
+          exit 1
 
       - name: Upload APK
         if: always()
