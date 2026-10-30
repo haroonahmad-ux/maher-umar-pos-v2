@@ -1859,35 +1859,6 @@ class MaherUmarPOSApp(App):
         safe_id = hashlib.sha256(str(uid).encode("utf-8")).hexdigest()[:24]
         return os.path.join(self.user_data_dir, "retailer_" + safe_id + ".db")
 
-    def _load_local_session(self):
-        try:
-            with open(self.session_path, "r", encoding="utf-8") as source:
-                data = json.load(source)
-            if isinstance(data, dict) and data.get("uid") and data.get("name"):
-                return {"uid": str(data["uid"]), "name": str(data["name"]), "phone": str(data.get("phone", ""))}
-        except (OSError, ValueError, TypeError):
-            pass
-        return None
-
-    def _save_local_session(self, uid, name, phone):
-        os.makedirs(self.user_data_dir, exist_ok=True)
-        temp = self.session_path + ".tmp"
-        with open(temp, "w", encoding="utf-8") as target:
-            json.dump({"uid": uid, "name": name, "phone": phone, "saved_at": datetime.now().isoformat()}, target)
-        os.replace(temp, self.session_path)
-
-    def activate_retailer(self, uid, name, phone):
-        target = self._account_db_path(uid)
-        current_path = os.path.abspath(self.store.db_path)
-        if current_path != os.path.abspath(target):
-            self.store.conn.close()
-            legacy_path = os.path.join(self.user_data_dir, DB_NAME)
-            if not os.path.exists(target) and os.path.exists(legacy_path):
-                os.replace(legacy_path, target)
-            self.store = Store(target)
-        self.current_retailer = {"uid": uid, "name": name, "phone": phone}
-        self._save_local_session(uid, name, phone)
-
     def activate_retailer(self, uid, name, email, session):
         target = self._account_db_path(uid)
         current_path = os.path.abspath(self.store.db_path)
