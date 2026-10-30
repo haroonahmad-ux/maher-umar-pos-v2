@@ -111,16 +111,25 @@ KV = r'''
                 size_hint_y: None
                 height: self.minimum_height
                 spacing: dp(10)
-                Label:
-                    text: '[b]MAHER UMAR MOBILE & COMMUNICATION[/b]\n[size=13sp]Your store, in control[/size]'
-                    markup: True
+                BoxLayout:
+                    orientation: 'horizontal'
                     size_hint_y: None
                     height: dp(92)
-                    font_size: '21sp'
-                    color: (0.07, 0.19, 0.23, 1)
-                    halign: 'left'
-                    valign: 'middle'
-                    text_size: self.size
+                    spacing: dp(12)
+                    Image:
+                        source: 'app_icon.png'
+                        size_hint: None, None
+                        size: dp(76), dp(76)
+                        allow_stretch: True
+                        keep_ratio: True
+                    Label:
+                        text: '[b]MAHER UMAR MOBILE & COMMUNICATION[/b]\\n[size=13sp]Your store, in control[/size]'
+                        markup: True
+                        font_size: '21sp'
+                        color: (0.07, 0.19, 0.23, 1)
+                        halign: 'left'
+                        valign: 'middle'
+                        text_size: self.size
                 BoxLayout:
                     orientation: 'vertical'
                     size_hint_y: None
@@ -308,6 +317,7 @@ KV = r'''
                     id: discount_form
                     orientation: 'vertical'
                     size_hint_y: None
+                    size_hint_y: None
                     height: dp(0)
                     opacity: 0
                     disabled: True
@@ -367,10 +377,23 @@ KV = r'''
                 on_release: app.go('home')
             PageHeading:
                 text: 'Stock Management'
+        BoxLayout:
+            size_hint_y: None
+            height: dp(46)
+            spacing: dp(7)
+            Field:
+                id: stock_search
+                hint_text: 'Search product name or category'
+                on_text: root.set_search(self.text)
+            SecondaryButton:
+                text: '⌕'
+                size_hint_x: None
+                width: dp(48)
+                on_release: root.set_search(self.ids.stock_search.text)
             SecondaryButton:
                 text: '☰'
                 size_hint_x: None
-                width: dp(46)
+                width: dp(48)
                 on_release: root.open_filters()
         Label:
             text: root.filter_summary
@@ -1039,9 +1062,15 @@ class StockScreen(Screen):
     def on_pre_enter(self, *args):
         self.refresh()
 
+    search_query = ""
+
     def set_filter(self, value):
         self.active_filter = value
         self.filter_summary = "Filter: " + value
+        self.refresh()
+
+    def set_search(self, value):
+        self.search_query = (value or "").strip().casefold()
         self.refresh()
 
     def open_filters(self):
@@ -1075,6 +1104,98 @@ class StockScreen(Screen):
         scroller.add_widget(menu)
         popup.open()
 
+    @staticmethod
+    def edit_product_discount(product):
+        store = App.get_running_app().store
+        active = float(product["discount_percent"] or 0) > 0
+        body = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(8))
+        body.add_widget(Label(
+            text=f"[b]{product['name']}[/b]\\nManage this product's promotion",
+            markup=True, size_hint_y=None, height=dp(48),
+            color=(0.08, 0.16, 0.18, 1), halign="left"
+        ))
+        percent = TextInput(
+            text=str(product["discount_percent"] or "") if active else "",
+            hint_text="Discount percentage (e.g. 10)",
+            input_filter="float", multiline=False, size_hint_y=None, height=dp(46)
+        )
+        expiry = TextInput(
+            text=datetime.strptime(product["discount_end_date"], "%Y-%m-%d").strftime("%d%m")
+                 if active and product["discount_end_date"] else "",
+            hint_text="Expiry date (DDMM, e.g. 3011)",
+            input_filter="int", multiline=False, size_hint_y=None, height=dp(46)
+        )
+        quantity = TextInput(
+            text=str(product["discount_min_qty"] or "") if active else "",
+            hint_text="Minimum qualifying quantity",
+            input_filter="int", multiline=False, size_hint_y=None, height=dp(46)
+        )
+        body.add_widget(percent); body.add_widget(expiry); body.add_widget(quantity)
+        start_date = product["discount_start_date"] if active else datetime.now().strftime("%Y-%m-%d")
+        start_display = datetime.strptime(start_date, "%Y-%m-%d").strftime("%d-%m-%Y")
+        body.add_widget(Label(
+            text="Promotion starts: " + start_display + "\\nStart date is automatic; only expiry is required.",
+            size_hint_y=None, height=dp(42), color=(0.35, 0.43, 0.46, 1), font_size="12sp"
+        ))
+        buttons = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(6))
+        cancel = Button(text="Cancel", background_normal="", background_color=(0.88,0.94,0.95,1), color=(0.07,0.26,0.31,1))
+        save = Button(text="Save discount", background_normal="", background_color=(0.055,0.34,0.42,1), color=(1,1,1,1), bold=True)
+        buttons.add_widget(cancel); buttons.add_widget(save); body.add_widget(buttons)
+        popup = Popup(title="Product discount", content=body, size_hint=(0.92,None), height=dp(370),
+                      auto_dismiss=False, background_color=(1,1,1,1),
+                      title_color=(0.08,0.16,0.18,1), separator_color=(0.08,0.52,0.30,1))
+        cancel.bind(on_release=popup.dismiss)
+
+        def save_discount(*_args):
+            try:
+                pct = float(percent.text or 0)
+                if pct <= 0 or pct >= 100:
+                    raise ValueError("Discount percentage 0 se zyada aur 100 se kam enter karein.")
+                digits = "".join(ch for ch in expiry.text if ch.isdigit())
+                if len(digits) != 4:
+                    raise ValueError("Expiry date DDMM format mein 4 digits enter karein, misal: 3011.")
+                day, month = int(digits[:2]), int(digits[2:])
+                today = datetime.now().date()
+                try:
+                    end = datetime(today.year, month, day).date()
+                except ValueError:
+                    raise ValueError("Expiry date valid nahi. DDMM dobara check karein.")
+                if end < today:
+                    raise ValueError("Expiry date aaj ya future ki honi chahiye.")
+                qty = int(quantity.text or 0)
+                if qty <= 0:
+                    raise ValueError("Minimum qualifying quantity 1 ya us se zyada honi chahiye.")
+                with store.conn:
+                    store.conn.execute(
+                        "UPDATE products SET discount_percent=?, discount_start_date=?, discount_end_date=?, discount_min_qty=? WHERE id=?",
+                        (pct, start_date, end.strftime("%Y-%m-%d"), qty, product["id"])
+                    )
+                popup.dismiss()
+                App.get_running_app().root.get_screen("stock").refresh()
+                show_message("Product discount saved successfully.", "Discount updated")
+            except (ValueError, sqlite3.Error) as exc:
+                show_message(str(exc), "Check discount details")
+
+        def turn_off(*_args):
+            with store.conn:
+                store.conn.execute(
+                    "UPDATE products SET discount_percent=0, discount_start_date='', discount_end_date='', discount_min_qty=0 WHERE id=?",
+                    (product["id"],)
+                )
+            popup.dismiss()
+            App.get_running_app().root.get_screen("stock").refresh()
+            show_message("Product discount has been turned off.", "Discount disabled")
+
+        save.bind(on_release=save_discount)
+        if active:
+            off = Button(text="Turn discount off", size_hint_y=None, height=dp(42),
+                         background_normal="", background_color=(0.98,0.89,0.88,1),
+                         color=(0.55,0.15,0.12,1))
+            off.bind(on_release=turn_off)
+            body.add_widget(off)
+            popup.height = dp(420)
+        popup.open()
+
     def add_stock(self):
         try:
             name = self.ids.stock_product_name.text.strip()
@@ -1092,7 +1213,7 @@ class StockScreen(Screen):
     def _make_product_card(product):
         has_discount = float(product["discount_percent"] or 0) > 0
         card = BoxLayout(
-            orientation="vertical", size_hint_y=None, height=dp(148 if has_discount else 122),
+            orientation="vertical", size_hint_y=None, height=dp(190 if has_discount else 164),
             padding=[dp(10), dp(8), dp(10), dp(8)], spacing=dp(5)
         )
         with card.canvas.before:
@@ -1133,11 +1254,21 @@ class StockScreen(Screen):
                     return value or "—"
             offer = Label(
                 text=f"[b]OFFER[/b]  {float(product['discount_percent']):g}% off • Qty {int(product['discount_min_qty'])}+ • Until {display_date(product['discount_end_date'])}",
-                markup=True, size_hint_y=None, height=dp(24),
+                markup=True, size_hint_y=None, height=dp(22),
                 color=(0.05, 0.40, 0.30, 1), font_size="11sp",
                 halign="left", valign="middle", text_size=(Window.width - dp(60), None)
             )
             card.add_widget(offer)
+        actions = BoxLayout(size_hint_y=None, height=dp(32), spacing=dp(6))
+        edit = Button(
+            text="Edit discount" if has_discount else "Add discount",
+            background_normal="", background_down="",
+            background_color=(0.88, 0.94, 0.95, 1),
+            color=(0.07, 0.26, 0.31, 1), font_size="11sp"
+        )
+        edit.bind(on_release=lambda *_args, p=dict(product): StockScreen.edit_product_discount(p))
+        actions.add_widget(edit)
+        card.add_widget(actions)
         return card
 
     def refresh(self):
@@ -1145,6 +1276,13 @@ class StockScreen(Screen):
         container.clear_widgets()
         all_rows = list(App.get_running_app().store.products(order="name"))
         selected = self.active_filter
+        if self.search_query:
+            query = self.search_query
+            all_rows = [
+                p for p in all_rows
+                if query in str(p["name"] or "").casefold()
+                or query in str(p["category"] or "").casefold()
+            ]
         if selected == "Newest product":
             all_rows.sort(key=lambda p: (p["created_at"] or "", int(p["id"])), reverse=True)
         elif selected == "Old products":
