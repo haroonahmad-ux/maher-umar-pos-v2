@@ -1083,9 +1083,9 @@ class AddProductScreen(Screen):
             App.get_running_app().refresh_home()
             App.get_running_app().root.get_screen("stock").refresh()
             self.on_pre_enter()
-            message = f"Product saved successfully.\\nProduct ID: {pid}\\nAvailable in Stock Management and checkout."
+            message = f"Product saved successfully.\nProduct ID: {pid}\nAvailable in Stock Management and checkout."
             if raw_name.casefold() != name.casefold():
-                message += f"\\nSpelling corrected: {raw_name} → {name}"
+                message += f"\nSpelling corrected: {raw_name} → {name}"
             show_message(message, "Product saved")
         except (ValueError, sqlite3.Error) as exc:
             show_message(str(exc), "Check product details")
