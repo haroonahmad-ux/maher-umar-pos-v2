@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - feat/stock-management-discounts
+      - feature/firebase-phone-otp
   pull_request:
     branches:
       - main
