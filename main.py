@@ -6,6 +6,8 @@ import shutil
 import sqlite3
 import sys
 import traceback
+import difflib
+import re
 from datetime import datetime
 
 from kivy.app import App
@@ -311,45 +313,14 @@ KV = r'''
                         input_filter: 'int'
                     Widget:
                 SecondaryButton:
-                    text: '＋  Add Product Discount (Optional)'
+                    id: discount_toggle
+                    text: '＋  Add Discount (Optional)'
                     on_release: root.toggle_discount_form()
                 BoxLayout:
-                    id: discount_form
+                    id: discount_slot
                     orientation: 'vertical'
                     size_hint_y: None
-                    size_hint_y: None
                     height: dp(0)
-                    opacity: 0
-                    disabled: True
-                    spacing: dp(7)
-                    Label:
-                        text: '[b]PRODUCT DISCOUNT[/b]'
-                        markup: True
-                        size_hint_y: None
-                        height: dp(25)
-                        font_size: '14sp'
-                        color: (0.12, 0.25, 0.29, 1)
-                        halign: 'left'
-                        text_size: self.size
-                    Field:
-                        id: discount_percent
-                        hint_text: 'Discount percentage (e.g. 10)'
-                        input_filter: 'float'
-                    Field:
-                        id: discount_start
-                        hint_text: 'Start date (automatic)'
-                        readonly: True
-                    Field:
-                        id: discount_end
-                        hint_text: 'Expiry date (DDMM, e.g. 3011)'
-                        input_filter: 'int'
-                        max_text_length: 4
-                    Field:
-                        id: discount_qty
-                        hint_text: 'Minimum qualifying quantity'
-                        input_filter: 'int'
-                    HintText:
-                        text: 'Start date is automatic. Enter expiry as DDMM; current year is added.'
                 PrimaryButton:
                     text: 'Save Product'
                     on_release: root.add_product()
@@ -708,6 +679,42 @@ def detect_category(name, category=""):
         return "ACCESSORIES"
     return "GENERAL"
 
+# Conservative offline vocabulary for common mobile-retail product terms.
+# Unknown words and model identifiers containing digits are never auto-rewritten.
+MOBILE_PRODUCT_DICTIONARY = set("""
+mobile phone smartphone charger charging cable data usb adapter adaptor
+earbud earbuds airpod airpods handsfree headset headphone headphones neckband
+speaker bluetooth smartwatch watch power bank powerbank battery screen protector
+tempered glass cover case backcover pouch holder stand tripod selfie stick
+memory card sdcard sim card simcard tablet ipad laptop keyboard mouse stylus
+wireless fast original premium refurbished display touch panel camera lens
+vivo oppo samsung iphone xiaomi redmi realme infinix tecno itel nokia oneplus
+motorola google pixel huawei honor nothing apple type c micro usb lightning
+black white blue green red gold silver pink purple transparent clear
+""".split())
+
+def correct_product_spelling(name):
+    """Correct close misspellings of known retail words without internet access."""
+    if not name:
+        return name
+    def fix(match):
+        token = match.group(0)
+        if any(char.isdigit() for char in token) or len(token) < 4:
+            return token
+        lower = token.casefold()
+        if lower in MOBILE_PRODUCT_DICTIONARY:
+            return token
+        candidates = difflib.get_close_matches(lower, MOBILE_PRODUCT_DICTIONARY, n=1, cutoff=0.80)
+        if not candidates:
+            return token
+        corrected = candidates[0]
+        if token.isupper():
+            return corrected.upper()
+        if token.istitle():
+            return corrected.title()
+        return corrected
+    return re.sub(r"[A-Za-z]+", fix, name)
+
 
 class DialogBody(BoxLayout):
     """Light, high-contrast surface for Android confirmation dialogs."""
@@ -724,43 +731,40 @@ class DialogBody(BoxLayout):
 
 
 def show_message(message, title="Maher Umar POS"):
-    """High-contrast confirmation dialog with height adapted to the message."""
-    body = DialogBody(orientation="vertical", padding=[dp(18), dp(14), dp(18), dp(14)], spacing=dp(12))
+    """White, scroll-safe confirmation dialog with a permanently visible OK button."""
+    body = DialogBody(orientation="vertical", padding=[dp(16), dp(14), dp(16), dp(14)], spacing=dp(10))
+    scroll = ScrollView(do_scroll_x=False, do_scroll_y=True, bar_width=dp(3))
     label = Label(
         text=str(message or ""), color=(0.04, 0.10, 0.12, 1),
-        halign="left", valign="top", font_size="15sp", bold=False,
-        size_hint_y=None,
+        halign="left", valign="top", font_size="15sp", size_hint_y=None
     )
-    body.add_widget(label)
 
     def fit_label(*_):
-        label.text_size = (max(dp(160), body.width - dp(36)), None)
+        label.text_size = (max(dp(160), scroll.width - dp(8)), None)
         label.texture_update()
-        label.height = max(dp(78), label.texture_size[1] + dp(18))
+        label.height = max(dp(58), label.texture_size[1] + dp(14))
 
-    body.bind(width=fit_label)
+    scroll.bind(width=fit_label)
+    label.bind(texture_size=lambda *_: setattr(label, "height", max(dp(58), label.texture_size[1] + dp(14))))
+    scroll.add_widget(label)
+    body.add_widget(scroll)
     close = Button(
         text="OK", size_hint_y=None, height=dp(48), background_normal="",
         background_down="", background_color=(0.04, 0.36, 0.44, 1),
-        color=(1, 1, 1, 1), font_size="16sp", bold=True,
+        color=(1, 1, 1, 1), font_size="16sp", bold=True
     )
     body.add_widget(close)
+    dialog_height = min(max(dp(270), Window.height * 0.52), Window.height * 0.78)
     dialog = Popup(
-        title=str(title), content=body, size_hint=(0.92, None), height=dp(230),
-        auto_dismiss=False, background_color=(1, 1, 1, 1),
+        title=str(title), content=body, size_hint=(0.92, None),
+        height=dialog_height, auto_dismiss=False,
+        background="", background_color=(1, 1, 1, 1),
         title_color=(0.04, 0.13, 0.16, 1),
-        separator_color=(0.04, 0.36, 0.44, 1), title_size="18sp",
+        separator_color=(0.04, 0.52, 0.30, 1), title_size="18sp"
     )
-
-    def resize_dialog(*_):
-        fit_label()
-        max_height = max(dp(260), Window.height * 0.72)
-        dialog.height = min(max(label.height + dp(112), dp(210)), max_height)
-
-    body.bind(width=resize_dialog)
     close.bind(on_release=dialog.dismiss)
-    dialog.bind(on_open=resize_dialog)
     dialog.open()
+    Clock.schedule_once(lambda _dt: fit_label(), 0)
     return dialog
 
 
@@ -983,31 +987,66 @@ class ProductsScreen(Screen):
 
 
 class AddProductScreen(Screen):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.discount_panel = None
+        self.discount_fields = {}
+
     def on_pre_enter(self, *args):
-        for key in ("pname", "pcategory", "purchase", "saleprice", "stock",
-                    "discount_percent", "discount_start", "discount_end", "discount_qty"):
-            if key in self.ids:
-                self.ids[key].text = ""
-        self.ids.discount_start.text = datetime.now().strftime("%d-%m-%Y")
-        form = self.ids.discount_form
-        form.height = dp(0)
-        form.opacity = 0
-        form.disabled = True
+        for key in ("pname", "pcategory", "purchase", "saleprice", "stock"):
+            self.ids[key].text = ""
+        self.ids.discount_slot.clear_widgets()
+        self.ids.discount_slot.height = 0
+        self.ids.discount_toggle.text = "＋  Add Discount (Optional)"
+        self.discount_panel = None
+        self.discount_fields = {}
 
     def toggle_discount_form(self):
-        form = self.ids.discount_form
-        opening = form.disabled
-        if opening:
-            self.ids.discount_start.text = datetime.now().strftime("%d-%m-%Y")
-            form.height = dp(300)
-            form.opacity = 1
-            form.disabled = False
-        else:
-            form.height = dp(0)
-            form.opacity = 0
-            form.disabled = True
-            for key in ("discount_percent", "discount_end", "discount_qty"):
-                self.ids[key].text = ""
+        slot = self.ids.discount_slot
+        if self.discount_panel is not None:
+            slot.clear_widgets()
+            slot.height = 0
+            self.discount_panel = None
+            self.discount_fields = {}
+            self.ids.discount_toggle.text = "＋  Add Discount (Optional)"
+            return
+
+        panel = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(226), spacing=dp(7))
+        heading = Label(
+            text="[b]PRODUCT DISCOUNT[/b]", markup=True, size_hint_y=None, height=dp(25),
+            color=(0.12, 0.25, 0.29, 1), font_size="14sp", halign="left"
+        )
+        heading.bind(size=lambda w, *_: setattr(w, "text_size", w.size))
+        panel.add_widget(heading)
+
+        def make_field(hint, key, input_filter=None):
+            field = TextInput(
+                hint_text=hint, multiline=False, size_hint_y=None, height=dp(48),
+                padding=[dp(12), dp(13), dp(12), dp(10)], font_size="15sp",
+                foreground_color=(0.10, 0.17, 0.19, 1),
+                hint_text_color=(0.42, 0.49, 0.51, 1),
+                cursor_color=(0.05, 0.40, 0.48, 1),
+                background_normal="", background_active="",
+                background_color=(0.93, 0.96, 0.97, 1),
+                input_filter=input_filter
+            )
+            self.discount_fields[key] = field
+            panel.add_widget(field)
+
+        make_field("Discount percentage (e.g. 10)", "percent", "float")
+        make_field("Expiry date (DDMM, e.g. 3011)", "expiry", "int")
+        make_field("Minimum qualifying quantity", "quantity", "int")
+        note = Label(
+            text="Promotion starts automatically today. Only expiry date and qualifying quantity are required.",
+            size_hint_y=None, height=dp(42), color=(0.39, 0.47, 0.50, 1),
+            font_size="12sp", halign="left", valign="middle"
+        )
+        note.bind(size=lambda w, *_: setattr(w, "text_size", w.size))
+        panel.add_widget(note)
+        slot.add_widget(panel)
+        slot.height = panel.height
+        self.discount_panel = panel
+        self.ids.discount_toggle.text = "−  Remove Discount"
 
     @staticmethod
     def _parse_expiry(raw):
@@ -1024,20 +1063,17 @@ class AddProductScreen(Screen):
 
     def add_product(self):
         try:
-            name = self.ids.pname.text.strip()
+            raw_name = self.ids.pname.text.strip()
+            name = correct_product_spelling(raw_name)
             category = self.ids.pcategory.text.strip()
             purchase = float(self.ids.purchase.text or 0)
             sale = float(self.ids.saleprice.text or 0)
             stock = int(self.ids.stock.text or 0)
-            pct = float(self.ids.discount_percent.text or 0)
-            qty = int(self.ids.discount_qty.text or 0)
+            pct = float(self.discount_fields.get("percent").text or 0) if self.discount_fields else 0
+            qty = int(self.discount_fields.get("quantity").text or 0) if self.discount_fields else 0
             if pct:
-                start_display = self.ids.discount_start.text.strip()
-                try:
-                    start = datetime.strptime(start_display, "%d-%m-%Y").strftime("%Y-%m-%d")
-                except ValueError:
-                    start = datetime.now().strftime("%Y-%m-%d")
-                end = self._parse_expiry(self.ids.discount_end.text)
+                start = datetime.now().strftime("%Y-%m-%d")
+                end = self._parse_expiry(self.discount_fields.get("expiry").text)
             else:
                 start = end = ""
                 qty = 0
@@ -1047,10 +1083,10 @@ class AddProductScreen(Screen):
             App.get_running_app().refresh_home()
             App.get_running_app().root.get_screen("stock").refresh()
             self.on_pre_enter()
-            show_message(
-                f"Product saved successfully.\nProduct ID: {pid}\nAvailable in Stock Management and checkout.",
-                "Product saved"
-            )
+            message = f"Product saved successfully.\\nProduct ID: {pid}\\nAvailable in Stock Management and checkout."
+            if raw_name.casefold() != name.casefold():
+                message += f"\\nSpelling corrected: {raw_name} → {name}"
+            show_message(message, "Product saved")
         except (ValueError, sqlite3.Error) as exc:
             show_message(str(exc), "Check product details")
 
