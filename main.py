@@ -1203,7 +1203,7 @@ class AuthScreen(Screen):
 
     def verify_otp(self):
         code = self.ids.otp.text.strip()
-        if not re.fullmatch(r"\\d{6}", code):
+        if not re.fullmatch(r"\d{6}", code):
             show_message("6-digit OTP enter karein.", "Invalid OTP")
             return
         if not self._verification_id:
