@@ -19,7 +19,7 @@ from kivy.clock import Clock
 from kivy.lang import Builder
 from kivy.metrics import dp
 from kivy.graphics import Color, RoundedRectangle
-from kivy.properties import StringProperty
+from kivy.properties import StringProperty, BooleanProperty
 from kivy.uix.screenmanager import ScreenManager, Screen
 from kivy.uix.popup import Popup
 from kivy.uix.label import Label
@@ -218,7 +218,7 @@ KV = r'''
                     cols: 2
                     spacing: dp(8)
                     size_hint_y: None
-                    height: dp(272)
+                    height: self.minimum_height
                     PrimaryButton:
                         text: 'Add Products'
                         on_release: app.go('add_products')
@@ -373,9 +373,9 @@ KV = r'''
                         hint_text: 'Opening quantity'
                         input_filter: 'int'
                     Widget:
-                SecondaryButton:
+                PrimaryButton:
                     id: discount_toggle
-                    text: '＋  Add Discount (Optional)'
+                    text: '＋  Add Product Discount (Optional)'
                     on_release: root.toggle_discount_form()
                 BoxLayout:
                     id: discount_slot
@@ -1046,8 +1046,10 @@ class Store:
 
 
 class AuthScreen(Screen):
-    signup_mode = True
-    subtitle = StringProperty("Create your retailer account")
+    # Kivy property is required so the signup/login controls update immediately.
+    # Start on Login; new retailers can switch to the signup form.
+    signup_mode = BooleanProperty(False)
+    subtitle = StringProperty("Login to your retailer account")
 
     def toggle_mode(self):
         self.signup_mode = not self.signup_mode
