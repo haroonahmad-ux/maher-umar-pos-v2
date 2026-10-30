@@ -1060,7 +1060,7 @@ class AuthScreen(Screen):
         if not re.fullmatch(r"[A-Za-z0-9_]{4,24}", username):
             show_message("Username 4–24 characters ka ho; letters, numbers aur underscore use karein.", "Invalid username")
             return
-        if len(password) < 12 or not re.search(r"[A-Z]", password) or not re.search(r"[a-z]", password) or not re.search(r"\\d", password) or not re.search(r"[^A-Za-z0-9]", password):
+        if len(password) < 12 or not re.search(r"[A-Z]", password) or not re.search(r"[a-z]", password) or not re.search(r"\d", password) or not re.search(r"[^A-Za-z0-9]", password):
             show_message("Password kam az kam 12 characters ka ho aur uppercase, lowercase, number aur special character include kare.", "Weak password")
             return
         if self.signup_mode:
