@@ -8,6 +8,9 @@ import sys
 import traceback
 import difflib
 import re
+import json
+import urllib.request
+import urllib.error
 from datetime import datetime
 
 from kivy.app import App
@@ -30,6 +33,8 @@ from kivy.uix.scrollview import ScrollView
 APP_TITLE = "Maher Umar POS"
 SHOP_NAME = "MAHER UMAR MOBILE & COMMUNICATION"
 DB_NAME = "maher_umar_pos.db"
+SUPABASE_URL = "https://dtajbsosaaohyluedcof.supabase.co"
+SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Uv13k1JAjggnYbz7NA6vYg_QLoRLd79"
 LOW_STOCK_THRESHOLD = 5
 
 # Android safe-area defaults: keep status/navigation bars visible.
@@ -94,6 +99,56 @@ KV = r'''
     halign: 'left'
     valign: 'middle'
     text_size: self.size
+
+<AuthScreen>:
+    BoxLayout:
+        orientation: 'vertical'
+        padding: dp(22)
+        spacing: dp(12)
+        canvas.before:
+            Color:
+                rgba: (0.955, 0.972, 0.978, 1)
+            Rectangle:
+                pos: self.pos
+                size: self.size
+        Widget:
+            size_hint_y: 0.25
+        PageHeading:
+            text: 'MAHER UMAR POS'
+            halign: 'center'
+        Label:
+            text: root.subtitle
+            size_hint_y: None
+            height: dp(38)
+            color: (0.30, 0.40, 0.43, 1)
+            font_size: '14sp'
+        Field:
+            id: phone
+            hint_text: 'Mobile number (signup only, e.g. 03XXXXXXXXX)'
+            input_filter: 'int'
+            disabled: not root.signup_mode
+            opacity: 1 if root.signup_mode else 0
+            size_hint_y: None
+            height: dp(48) if root.signup_mode else dp(0)
+        Field:
+            id: username
+            hint_text: 'Username'
+        Field:
+            id: password
+            hint_text: 'Password (minimum 12 characters)'
+            password: True
+        HintText:
+            text: 'No OTP is sent. Your phone number remains unverified.'
+            size_hint_y: None
+            height: dp(28) if root.signup_mode else dp(0)
+        PrimaryButton:
+            text: 'Create Retailer Account' if root.signup_mode else 'Login'
+            on_release: root.submit()
+        SecondaryButton:
+            text: 'Already registered? Login' if root.signup_mode else 'New retailer? Create account'
+            on_release: root.toggle_mode()
+        Widget:
+            size_hint_y: 0.35
 
 <MainScreen>:
     BoxLayout:
@@ -987,6 +1042,54 @@ class Store:
         return dest_path
 
 
+class AuthScreen(Screen):
+    signup_mode = True
+    subtitle = StringProperty("Create your retailer account")
+
+    def toggle_mode(self):
+        self.signup_mode = not self.signup_mode
+        self.subtitle = "Create your retailer account" if self.signup_mode else "Login to your retailer account"
+        self.ids.phone.text = ""
+        self.ids.username.text = ""
+        self.ids.password.text = ""
+
+    def submit(self):
+        phone = self.ids.phone.text.strip()
+        username = self.ids.username.text.strip()
+        password = self.ids.password.text
+        if not re.fullmatch(r"[A-Za-z0-9_]{4,24}", username):
+            show_message("Username 4–24 characters ka ho; letters, numbers aur underscore use karein.", "Invalid username")
+            return
+        if len(password) < 12 or not re.search(r"[A-Z]", password) or not re.search(r"[a-z]", password) or not re.search(r"\\d", password) or not re.search(r"[^A-Za-z0-9]", password):
+            show_message("Password kam az kam 12 characters ka ho aur uppercase, lowercase, number aur special character include kare.", "Weak password")
+            return
+        if self.signup_mode:
+            digits = "".join(ch for ch in phone if ch.isdigit())
+            if digits.startswith("0") and len(digits) == 11:
+                phone = "+92" + digits[1:]
+            elif len(digits) == 12 and digits.startswith("92"):
+                phone = "+" + digits
+            else:
+                show_message("Valid Pakistani mobile number enter karein, misal: 03XXXXXXXXX.", "Invalid phone")
+                return
+        try:
+            result = App.get_running_app().retailer_auth(
+                "signup" if self.signup_mode else "login",
+                phone, username, password
+            )
+            if not result.get("access_token"):
+                raise ValueError("Authentication session receive nahi hui.")
+            App.get_running_app().current_retailer = {
+                "username": username,
+                "phone": phone if self.signup_mode else result.get("phone", "")
+            }
+            App.get_running_app().go("home")
+            App.get_running_app().refresh_home()
+            show_message("Retailer account ready hai. Aapka stock aur business database isi device par local rahega; doosre device par data lane ke liye backup import karein.", "Welcome")
+        except Exception as exc:
+            show_message(str(exc), "Account / login error")
+
+
 class MainScreen(Screen):
     summary_text = StringProperty("")
     def on_pre_enter(self, *args): self.refresh_summary()
@@ -1587,10 +1690,34 @@ class MaherUmarPOSApp(App):
     def build(self):
         self.title = APP_TITLE
         self.store = Store(os.path.join(self.user_data_dir, DB_NAME))
+        self.current_retailer = None
         Builder.load_string(KV)
         manager = ScreenManager()
+        manager.add_widget(AuthScreen(name="auth"))
         manager.add_widget(MainScreen(name="home")); manager.add_widget(ProductsScreen(name="products")); manager.add_widget(AddProductScreen(name="add_products")); manager.add_widget(StockScreen(name="stock")); manager.add_widget(SaleScreen(name="sale")); manager.add_widget(ExpensesScreen(name="expenses")); manager.add_widget(ReportsScreen(name="reports")); manager.add_widget(HistoryScreen(name="history")); manager.add_widget(UdhaarScreen(name="udhaar"))
+        manager.current = "auth"
         return manager
+    def retailer_auth(self, action, phone, username, password):
+        payload = json.dumps({"action": action, "phone": phone, "username": username, "password": password}).encode("utf-8")
+        request = urllib.request.Request(
+            SUPABASE_URL + "/functions/v1/retailer-auth",
+            data=payload,
+            headers={"apikey": SUPABASE_PUBLISHABLE_KEY, "Authorization": "Bearer " + SUPABASE_PUBLISHABLE_KEY,
+                     "Content-Type": "application/json"},
+            method="POST"
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=25) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            try:
+                detail = json.loads(exc.read().decode("utf-8")).get("error", "Request rejected")
+            except Exception:
+                detail = "HTTP " + str(exc.code)
+            raise ValueError(str(detail))
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise ValueError("Internet connection check karein; account service filhal available nahi. Aapka local business data safe hai.") from exc
+
     def go(self, screen_name):
         self.root.current = screen_name
     def refresh_home(self):
