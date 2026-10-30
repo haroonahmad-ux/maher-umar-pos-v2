@@ -15,6 +15,9 @@ source.include_exts = py,kv,png,jpg,jpeg,atlas,json,ttf,otf
 
 version = 2.0.0
 
+# Custom bright mobile-retail POS app icon
+icon.filename = app_icon.png
+
 requirements = python3,kivy
 
 orientation = portrait
