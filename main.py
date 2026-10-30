@@ -249,6 +249,9 @@ KV = r'''
                     SecondaryButton:
                         text: 'Refresh Dashboard'
                         on_release: root.refresh_summary()
+                    SecondaryButton:
+                        text: 'Sign out'
+                        on_release: app.sign_out()
                 Label:
                     text: '[b]BUSINESS SNAPSHOT[/b]'
                     markup: True
@@ -1079,10 +1082,12 @@ class AuthScreen(Screen):
             )
             if not result.get("access_token"):
                 raise ValueError("Authentication session receive nahi hui.")
-            App.get_running_app().current_retailer = {
-                "username": username,
+            retailer = {
+                "username": username.lower(),
                 "phone": phone if self.signup_mode else result.get("phone", "")
             }
+            App.get_running_app().current_retailer = retailer
+            App.get_running_app()._save_local_session(retailer["username"], retailer["phone"])
             App.get_running_app().go("home")
             App.get_running_app().refresh_home()
             show_message("Retailer account ready hai. Aapka stock aur business database isi device par local rahega; doosre device par data lane ke liye backup import karein.", "Welcome")
@@ -1690,13 +1695,43 @@ class MaherUmarPOSApp(App):
     def build(self):
         self.title = APP_TITLE
         self.store = Store(os.path.join(self.user_data_dir, DB_NAME))
-        self.current_retailer = None
+        self.session_path = os.path.join(self.user_data_dir, "retailer_session.json")
+        self.current_retailer = self._load_local_session()
         Builder.load_string(KV)
         manager = ScreenManager()
         manager.add_widget(AuthScreen(name="auth"))
         manager.add_widget(MainScreen(name="home")); manager.add_widget(ProductsScreen(name="products")); manager.add_widget(AddProductScreen(name="add_products")); manager.add_widget(StockScreen(name="stock")); manager.add_widget(SaleScreen(name="sale")); manager.add_widget(ExpensesScreen(name="expenses")); manager.add_widget(ReportsScreen(name="reports")); manager.add_widget(HistoryScreen(name="history")); manager.add_widget(UdhaarScreen(name="udhaar"))
-        manager.current = "auth"
+        manager.current = "home" if self.current_retailer else "auth"
         return manager
+
+    def _load_local_session(self):
+        try:
+            with open(self.session_path, "r", encoding="utf-8") as source:
+                data = json.load(source)
+            if isinstance(data, dict) and data.get("username"):
+                return {"username": str(data["username"]), "phone": str(data.get("phone", ""))}
+        except (OSError, ValueError, TypeError):
+            pass
+        return None
+
+    def _save_local_session(self, username, phone):
+        os.makedirs(self.user_data_dir, exist_ok=True)
+        temp = self.session_path + ".tmp"
+        with open(temp, "w", encoding="utf-8") as target:
+            json.dump({"username": username, "phone": phone or "", "saved_at": datetime.now().isoformat()}, target)
+        os.replace(temp, self.session_path)
+
+    def sign_out(self):
+        try:
+            if os.path.exists(self.session_path):
+                os.remove(self.session_path)
+        except OSError as exc:
+            show_message("Sign out failed: " + str(exc), "Sign out error")
+            return
+        self.current_retailer = None
+        self.go("auth")
+        show_message("You have been signed out. Your products, sales and local database are unchanged.", "Signed out")
+
     def retailer_auth(self, action, phone, username, password):
         payload = json.dumps({"action": action, "phone": phone, "username": username, "password": password}).encode("utf-8")
         request = urllib.request.Request(
