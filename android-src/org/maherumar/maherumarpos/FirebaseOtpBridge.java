@@ -2,6 +2,7 @@ package org.maherumar.maherumarpos;
 
 import android.app.Activity;
 import com.google.firebase.FirebaseApp;
+import com.google.firebase.FirebaseException;
 import com.google.firebase.FirebaseOptions;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.PhoneAuthCredential;
@@ -57,7 +58,7 @@ public final class FirebaseOtpBridge {
                         }
 
                         @Override
-                        public void onVerificationFailed(Exception exception) {
+                        public void onVerificationFailed(FirebaseException exception) {
                             callback.onError(safeMessage(exception));
                         }
 
