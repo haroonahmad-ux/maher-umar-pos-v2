@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - feat/stock-management-discounts
   pull_request:
     branches:
       - main
@@ -66,13 +67,14 @@ jobs:
           python -m pip install \
             "git+https://github.com/kivy/buildozer.git"
 
-      - name: Verify build configuration
+      - name: Verify build configuration and Python syntax
         run: |
           python --version
           java -version
           buildozer --version
           test -f buildozer.spec
           test -f main.py
+          python -m py_compile main.py
 
       - name: Prepare isolated application source
         run: |
