@@ -184,8 +184,19 @@ KV = r'''
                 text: 'Verify & Continue' if root.otp_sent else 'Send Secure OTP'
                 on_release: root.primary_action()
             SecondaryButton:
-                text: 'Change mobile number' if root.otp_sent else 'Secure phone verification'
-                on_release: root.change_number() if root.otp_sent else None
+                text: 'Change mobile number'
+                opacity: 1 if root.otp_sent else 0
+                height: dp(44) if root.otp_sent else dp(0)
+                on_release: root.change_number()
+        Label:
+            text: 'By continuing, you agree to receive an SMS verification code. Carrier charges may apply.'
+            size_hint_y: None
+            height: dp(34)
+            font_size: '10sp'
+            color: (0.43, 0.51, 0.54, 1)
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.width, None
         Label:
             text: 'Your business records stay on this device.'
             size_hint_y: None
