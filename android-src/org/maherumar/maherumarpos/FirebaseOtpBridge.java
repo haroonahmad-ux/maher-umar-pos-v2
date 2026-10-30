@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit;
 public final class FirebaseOtpBridge {
     public interface Callback {
         void onCodeSent(String verificationId);
-        void onSignedIn(String uid);
+        void onSignedIn(String uid, String idToken);
         void onError(String message);
     }
 
@@ -91,7 +91,16 @@ public final class FirebaseOtpBridge {
                 firebaseAuth.signInWithCredential(credential);
         task.addOnCompleteListener(result -> {
             if (result.isSuccessful() && firebaseAuth.getCurrentUser() != null) {
-                callback.onSignedIn(firebaseAuth.getCurrentUser().getUid());
+                firebaseAuth.getCurrentUser().getIdToken(false).addOnCompleteListener(tokenResult -> {
+                    if (tokenResult.isSuccessful() && tokenResult.getResult() != null) {
+                        callback.onSignedIn(
+                                firebaseAuth.getCurrentUser().getUid(),
+                                tokenResult.getResult().getToken()
+                        );
+                    } else {
+                        callback.onError(safeMessage(tokenResult.getException()));
+                    }
+                });
             } else {
                 Exception error = result.getException();
                 callback.onError(safeMessage(error));
