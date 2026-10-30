@@ -20,6 +20,12 @@ icon.filename = app_icon.png
 
 requirements = python3,kivy
 
+# Native Firebase Phone Authentication SDK and Java bridge
+android.gradle_dependencies = com.google.firebase:firebase-auth:25.0.0
+android.add_src = android-src
+android.enable_androidx = True
+android.add_compile_options = "sourceCompatibility = 1.8", "targetCompatibility = 1.8"
+
 orientation = portrait
 
 fullscreen = 0
