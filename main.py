@@ -167,16 +167,12 @@ KV = r'''
                 height: dp(48) if root.mode == 'signup' else dp(0)
                 disabled: root.mode != 'signup'
             Field:
-                id: password
-                hint_text: 'Password (minimum 6 characters)'
-                password: True
-            Field:
-                id: phone
-                hint_text: 'Mobile number (03XXXXXXXXX)'
-                input_filter: 'int'
+                id: email
+                hint_text: 'Email address'
+                input_type: 'text'
             Field:
                 id: otp
-                hint_text: 'Enter 6-digit OTP'
+                hint_text: 'Enter 6-digit email OTP'
                 input_filter: 'int'
                 opacity: 1 if root.otp_sent else 0
                 height: dp(48) if root.otp_sent else dp(0)
@@ -191,17 +187,17 @@ KV = r'''
                 valign: 'middle'
                 text_size: self.width, None
             PrimaryButton:
-                text: ('Verify OTP & Create Account' if root.mode == 'signup' else 'Verify OTP & Login') if root.otp_sent else ('Send Signup OTP' if root.mode == 'signup' else 'Verify Password & Send Login OTP')
+                text: ('Verify Email OTP & Create Account' if root.mode == 'signup' else 'Verify Email OTP & Login') if root.otp_sent else ('Send Signup OTP' if root.mode == 'signup' else 'Send Login OTP')
                 disabled: root.busy
                 on_release: root.primary_action()
             SecondaryButton:
-                text: 'Change mobile number'
+                text: 'Change email address'
                 opacity: 1 if root.otp_sent else 0
                 height: dp(44) if root.otp_sent else dp(0)
                 disabled: root.busy
-                on_release: root.change_number()
+                on_release: root.change_email()
         Label:
-            text: 'Phone verification is required. SMS and network charges may apply.'
+            text: 'A 6-digit verification code will be sent to your email address.'
             size_hint_y: None
             height: dp(34)
             font_size: '10sp'
@@ -1110,188 +1106,85 @@ class Store:
 class AuthScreen(Screen):
     mode = StringProperty("signup")
     otp_sent = BooleanProperty(False)
-    status_text = StringProperty("Create your account or sign in with your registered number.")
-    _verification_id = None
-    _otp_callback = None
-    _pending_attempt_id = None
-    _pending_action = None
-    _verifying_otp = False
+    status_text = StringProperty("Create an account or sign in using your email address.")
     busy = BooleanProperty(False)
-    _daily_remaining = 0
-    _monthly_remaining = 0
-
-    def _normalized_phone(self):
-        digits = "".join(ch for ch in self.ids.phone.text if ch.isdigit())
-        if len(digits) == 11 and digits.startswith("03"):
-            return "+92" + digits[1:]
-        if len(digits) == 12 and digits.startswith("92"):
-            return "+" + digits
-        if len(digits) == 10 and digits.startswith("3"):
-            return "+92" + digits
-        raise ValueError("Valid Pakistani mobile number enter karein, misal: 03XXXXXXXXX.")
+    _pending_email = ""
+    _pending_name = ""
 
     def set_mode(self, mode):
         if mode not in ("signup", "login"):
             return
         self.mode = mode
         self.otp_sent = False
-        self._verification_id = None
-        self._pending_attempt_id = None
-        self._pending_action = None
-        self._verifying_otp = False
         self.busy = False
         self.ids.otp.text = ""
-        self.status_text = "New retailer? Create your account." if mode == "signup" else "Enter your registered number and password."
+        self.status_text = "Enter your name and email to create an account." if mode == "signup" else "Enter your registered email address."
 
     def primary_action(self):
         if self.busy:
             return
         self.verify_otp() if self.otp_sent else self.send_otp()
 
-    def _make_callback(self):
-        from jnius import PythonJavaClass, java_method
-        screen = self
-        class OtpCallback(PythonJavaClass):
-            __javainterfaces__ = ["org/maherumar/maherumarpos/FirebaseOtpBridge$Callback"]
-            __javacontext__ = "app"
-            @java_method("(Ljava/lang/String;)V")
-            def onCodeSent(self, verification_id):
-                Clock.schedule_once(lambda dt: screen._on_code_sent(str(verification_id)), 0)
-            @java_method("(Ljava/lang/String;Ljava/lang/String;)V")
-            def onSignedIn(self, uid, id_token):
-                Clock.schedule_once(lambda dt: screen._on_signed_in(str(uid), str(id_token)), 0)
-            @java_method("(Ljava/lang/String;)V")
-            def onError(self, message):
-                Clock.schedule_once(lambda dt: screen._on_auth_error(str(message)), 0)
-        return OtpCallback()
-
     def send_otp(self):
+        email = self.ids.email.text.strip().lower()
         name = self.ids.retailer_name.text.strip() if self.mode == "signup" else ""
-        password = self.ids.password.text
+        if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+            show_message("Please enter a valid email address.", "Email required")
+            return
         if self.mode == "signup" and (len(name) < 2 or len(name) > 60):
-            show_message("Customer / Retailer name 2 se 60 characters ke darmiyan enter karein.", "Name required")
+            show_message("Retailer name must be 2–60 characters.", "Name required")
             return
-        if len(password) < 6 or len(password) > 72:
-            show_message("Password minimum 6 aur maximum 72 characters ka hona chahiye.", "Password required")
-            return
+        self.busy = True
+        self.status_text = "Requesting secure email verification code…"
         try:
-            self.busy = True
-            phone = self._normalized_phone()
             app = App.get_running_app()
-            preflight = app.retailer_auth(
-                "request_otp", phone=phone, purpose=self.mode,
-                customer_name=name, password=password
-            )
-            self._pending_attempt_id = str(preflight.get("attempt_id") or "")
-            self._daily_remaining = int(preflight.get("daily_remaining", 0))
-            self._monthly_remaining = int(preflight.get("monthly_remaining", 0))
-            if not self._pending_attempt_id:
-                raise ValueError("OTP request authorize nahi ho saki. Dobara try karein.")
-            from jnius import autoclass
-            activity = autoclass("org.kivy.android.PythonActivity").mActivity
-            bridge = autoclass("org.maherumar.maherumarpos.FirebaseOtpBridge")
-            if not app.firebase_ready:
-                raise ValueError("Firebase initialize nahi hua. Internet connection check karein.")
-            self._pending_action = self.mode
-            self._otp_callback = self._make_callback()
-            self.status_text = "Sending secure verification code…"
-            bridge.sendCode(activity, phone, self._otp_callback)
+            app.supabase_request_otp(email, self.mode, name)
+            self._pending_email = email
+            self._pending_name = name
+            self.otp_sent = True
+            self.ids.otp.text = ""
+            self.status_text = "If the address is eligible, a 6-digit code has been sent. Check Inbox and Spam."
         except Exception as exc:
+            self.status_text = "Could not send verification email."
+            show_message(str(exc), "Email OTP unavailable")
+        finally:
             self.busy = False
-            self.status_text = "Could not start verification."
-            show_message(str(exc), "OTP unavailable")
-
-    def _on_code_sent(self, verification_id):
-        self.busy = False
-        self._verification_id = verification_id
-        self.otp_sent = True
-        self.ids.otp.text = ""
-        self.status_text = ("Code sent. Enter the 6-digit SMS code. Remaining after this: "
-                            + str(self._daily_remaining) + " today, "
-                            + str(self._monthly_remaining) + " this month.")
 
     def verify_otp(self):
         code = self.ids.otp.text.strip()
         if not re.fullmatch(r"\d{6}", code):
-            show_message("6-digit OTP enter karein.", "Invalid OTP")
+            show_message("Please enter the 6-digit code from your email.", "Invalid OTP")
             return
-        if not self._verification_id:
-            show_message("OTP session expire ho gayi. Dobara code request karein.", "OTP expired")
-            self.change_number()
-            return
-        try:
-            from jnius import autoclass
-            bridge = autoclass("org.maherumar.maherumarpos.FirebaseOtpBridge")
-            self._otp_callback = self._make_callback()
-            self._verifying_otp = True
-            self.busy = True
-            self.status_text = "Verifying your code…"
-            bridge.verifyCode(self._verification_id, code, self._otp_callback)
-        except Exception as exc:
-            self._verifying_otp = False
-            self.busy = False
-            show_message(str(exc), "Verification error")
-
-    def _on_signed_in(self, uid, id_token):
-        self._verifying_otp = False
         self.busy = True
+        self.status_text = "Verifying your email code…"
         try:
-            phone = self._normalized_phone()
-            name = self.ids.retailer_name.text.strip() if self._pending_action == "signup" else ""
-            password = self.ids.password.text
-            action = "complete_signup" if self._pending_action == "signup" else "complete_login"
-            result = App.get_running_app().retailer_auth(
-                action, phone=phone, customer_name=name, password=password,
-                firebase_id_token=id_token, attempt_id=self._pending_attempt_id
-            )
-            if result.get("success") is not True or result.get("firebase_uid") != uid:
-                raise ValueError("Server could not confirm this verified retailer account.")
             app = App.get_running_app()
-            account_name = result.get("customer_name") or name or "Retailer"
-            app.activate_retailer(uid, account_name, phone)
+            session = app.supabase_verify_otp(self._pending_email, code)
+            user = session.get("user") or {}
+            uid = str(user.get("id") or "")
+            if not uid:
+                raise ValueError("Supabase verified the code but did not return an account ID.")
+            metadata = user.get("user_metadata") or {}
+            account_name = str(metadata.get("customer_name") or self._pending_name or self._pending_email.split("@")[0])
+            app.activate_retailer(uid, account_name, self._pending_email, session)
             self.otp_sent = False
-            self._verification_id = None
-            self._pending_attempt_id = None
-            self._pending_action = None
             self.ids.otp.text = ""
-            self.ids.password.text = ""
-            self.status_text = "Phone verified successfully."
-            self.busy = False
+            self.status_text = "Email verified successfully."
             app.go("home")
             app.refresh_home()
-            show_message("Your phone number and account were verified. Your business workspace is ready.", "Welcome")
+            show_message("Your email is verified and your retailer workspace is ready.", "Welcome")
         except Exception as exc:
+            self.status_text = "Email verification failed. Check the code and try again."
+            show_message(str(exc), "OTP verification failed")
+        finally:
             self.busy = False
-            self.status_text = "Account verification failed."
-            show_message(str(exc), "Account verification failed")
 
-    def _on_auth_error(self, message):
-        was_verifying = self._verifying_otp
-        self._verifying_otp = False
-        self.busy = False
-        lowered = (message or "").lower()
-        if was_verifying and ("invalid-verification-code" in lowered or ("invalid" in lowered and ("code" in lowered or "otp" in lowered))):
-            try:
-                App.get_running_app().retailer_auth(
-                    "record_otp_failure", phone=self._normalized_phone(),
-                    attempt_id=self._pending_attempt_id
-                )
-                self.status_text = "Incorrect OTP. A 5-minute cooldown is now active."
-            except Exception:
-                self.status_text = "Incorrect OTP. Cooldown status could not be confirmed; contact support before retrying."
-        else:
-            self.status_text = "Verification failed. Please try again."
-        show_message(message or "OTP verification failed. Try again.", "OTP error")
-
-    def change_number(self):
+    def change_email(self):
         self.otp_sent = False
-        self._verification_id = None
-        self._pending_attempt_id = None
-        self._pending_action = None
-        self._verifying_otp = False
-        self.busy = False
         self.ids.otp.text = ""
-        self.status_text = "Check your mobile number and details, then request a new code."
+        self._pending_email = ""
+        self._pending_name = ""
+        self.status_text = "Enter the correct email address and request a new code."
 
 
 class MainScreen(Screen):
@@ -1895,12 +1788,9 @@ class MaherUmarPOSApp(App):
         self.title = APP_TITLE
         self.session_path = os.path.join(self.user_data_dir, "retailer_session.json")
         self.current_retailer = self._load_local_session()
-        self.firebase_ready = self._initialize_firebase()
-        firebase_uid = self._firebase_current_uid() if self.firebase_ready else None
-        if firebase_uid and self.current_retailer and self.current_retailer.get("uid") == firebase_uid:
-            self.store = Store(self._account_db_path(firebase_uid))
+        if self.current_retailer:
+            self.store = Store(self._account_db_path(self.current_retailer["uid"]))
         else:
-            self.current_retailer = None
             self.store = Store(os.path.join(self.user_data_dir, DB_NAME))
         Builder.load_string(KV)
         manager = ScreenManager()
@@ -1909,24 +1799,61 @@ class MaherUmarPOSApp(App):
         manager.current = "home" if self.current_retailer else "auth"
         return manager
 
-    def _initialize_firebase(self):
+    def _load_local_session(self):
         try:
-            from jnius import autoclass
-            activity = autoclass("org.kivy.android.PythonActivity").mActivity
-            bridge = autoclass("org.maherumar.maherumarpos.FirebaseOtpBridge")
-            bridge.initialize(activity, "1:70955375975:android:5edae860cefbc3011fa3c2",
-                              "AIzaSyA7xAVZcaXI2k1Rpv-4vc0g7mDTKW0fRgE", "maher-umar-pos")
-            return True
-        except Exception:
-            return False
+            with open(self.session_path, "r", encoding="utf-8") as source:
+                data = json.load(source)
+            if isinstance(data, dict) and data.get("uid") and data.get("name"):
+                return data
+        except (OSError, ValueError, TypeError):
+            pass
+        return None
 
-    def _firebase_current_uid(self):
+    def _save_local_session(self, uid, name, email, session):
+        os.makedirs(self.user_data_dir, exist_ok=True)
+        data = {"uid": uid, "name": name, "email": email,
+                "access_token": session.get("access_token", ""),
+                "refresh_token": session.get("refresh_token", ""),
+                "token_type": session.get("token_type", "bearer"),
+                "saved_at": datetime.now().isoformat()}
+        temp = self.session_path + ".tmp"
+        with open(temp, "w", encoding="utf-8") as target:
+            json.dump(data, target)
+        os.replace(temp, self.session_path)
+
+    def _supabase_auth_request(self, endpoint, payload):
+        encoded = json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(
+            SUPABASE_URL + endpoint, data=encoded,
+            headers={"apikey": SUPABASE_PUBLISHABLE_KEY,
+                     "Authorization": "Bearer " + SUPABASE_PUBLISHABLE_KEY,
+                     "Content-Type": "application/json"},
+            method="POST")
         try:
-            from jnius import autoclass
-            value = autoclass("org.maherumar.maherumarpos.FirebaseOtpBridge").currentUid()
-            return str(value) if value else None
-        except Exception:
-            return None
+            with urllib.request.urlopen(request, timeout=30) as response:
+                result = json.loads(response.read().decode("utf-8"))
+                if not isinstance(result, dict):
+                    raise ValueError("Supabase returned an invalid authentication response.")
+                return result
+        except urllib.error.HTTPError as exc:
+            try:
+                body = json.loads(exc.read().decode("utf-8"))
+                detail = body.get("msg") or body.get("message") or body.get("error_description") or body.get("error") or "Request rejected"
+            except Exception:
+                detail = "HTTP " + str(exc.code)
+            raise ValueError(str(detail))
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise ValueError("Internet connection check karein. Supabase Auth filhal reachable nahi.") from exc
+
+    def supabase_request_otp(self, email, purpose, name=""):
+        payload = {"email": email, "create_user": purpose == "signup"}
+        if purpose == "signup":
+            payload["data"] = {"account_type": "retailer", "customer_name": name}
+        return self._supabase_auth_request("/auth/v1/otp", payload)
+
+    def supabase_verify_otp(self, email, token):
+        return self._supabase_auth_request("/auth/v1/verify",
+                                           {"email": email, "token": token, "type": "email"})
 
     def _account_db_path(self, uid):
         safe_id = hashlib.sha256(str(uid).encode("utf-8")).hexdigest()[:24]
@@ -1961,10 +1888,23 @@ class MaherUmarPOSApp(App):
         self.current_retailer = {"uid": uid, "name": name, "phone": phone}
         self._save_local_session(uid, name, phone)
 
+    def activate_retailer(self, uid, name, email, session):
+        target = self._account_db_path(uid)
+        current_path = os.path.abspath(self.store.db_path)
+        if current_path != os.path.abspath(target):
+            self.store.conn.close()
+            old_uid = (self.current_retailer or {}).get("uid")
+            old_path = self._account_db_path(old_uid) if old_uid else ""
+            legacy_path = os.path.join(self.user_data_dir, DB_NAME)
+            source_path = old_path if old_path and os.path.exists(old_path) else legacy_path
+            if not os.path.exists(target) and source_path and os.path.exists(source_path):
+                shutil.copy2(source_path, target)
+            self.store = Store(target)
+        self.current_retailer = {"uid": uid, "name": name, "email": email}
+        self._save_local_session(uid, name, email, session)
+
     def sign_out(self):
         try:
-            from jnius import autoclass
-            autoclass("org.maherumar.maherumarpos.FirebaseOtpBridge").signOut()
             if os.path.exists(self.session_path):
                 os.remove(self.session_path)
         except Exception as exc:
@@ -1973,32 +1913,6 @@ class MaherUmarPOSApp(App):
         self.current_retailer = None
         self.go("auth")
         show_message("You have been signed out. This retailer's local database remains preserved.", "Signed out")
-
-    def retailer_auth(self, action, **fields):
-        payload = {"action": action}
-        payload.update(fields)
-        encoded = json.dumps(payload).encode("utf-8")
-        request = urllib.request.Request(
-            SUPABASE_URL + "/functions/v1/retailer-auth",
-            data=encoded,
-            headers={"apikey": SUPABASE_PUBLISHABLE_KEY, "Authorization": "Bearer " + SUPABASE_PUBLISHABLE_KEY,
-                     "Content-Type": "application/json"},
-            method="POST"
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=25) as response:
-                result = json.loads(response.read().decode("utf-8"))
-                if not isinstance(result, dict):
-                    raise ValueError("Authentication service returned an invalid response.")
-                return result
-        except urllib.error.HTTPError as exc:
-            try:
-                detail = json.loads(exc.read().decode("utf-8")).get("error", "Request rejected")
-            except Exception:
-                detail = "HTTP " + str(exc.code)
-            raise ValueError(str(detail))
-        except (urllib.error.URLError, TimeoutError) as exc:
-            raise ValueError("Internet connection check karein; account service filhal available nahi. Aapka local business data safe hai.") from exc
 
     def go(self, screen_name):
         self.root.current = screen_name
