@@ -38,6 +38,8 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
+          cache-dependency-path: buildozer.spec
 
       - name: Install system dependencies
         run: |
@@ -84,9 +86,25 @@ jobs:
           base64 -d app_icon.png.b64 > app_icon.png
           cp app_icon.png .app-source/app_icon.png
 
-      - name: Build debug APK
+      - name: Build debug APK (retry transient Gradle download failures)
+        shell: bash
         run: |
-          buildozer -v android debug
+          set -o pipefail
+          for attempt in 1 2 3; do
+            echo "APK build attempt ${attempt}/3"
+            if buildozer -v android debug; then
+              exit 0
+            fi
+
+            if [ "${attempt}" -lt 3 ]; then
+              delay=$((attempt * 30))
+              echo "Build failed. Retrying in ${delay} seconds; generated Buildozer/Gradle files will be retained."
+              sleep "${delay}"
+            fi
+          done
+
+          echo "::error::APK build failed after 3 attempts."
+          exit 1
 
       - name: Upload APK
         if: always()
