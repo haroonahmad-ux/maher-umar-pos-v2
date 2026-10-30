@@ -198,6 +198,7 @@ KV = r'''
                 text: 'Change mobile number'
                 opacity: 1 if root.otp_sent else 0
                 height: dp(44) if root.otp_sent else dp(0)
+                disabled: root.busy
                 on_release: root.change_number()
         Label:
             text: 'Phone verification is required. SMS and network charges may apply.'
