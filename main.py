@@ -754,7 +754,7 @@ def show_message(message, title="Maher Umar POS"):
         color=(1, 1, 1, 1), font_size="16sp", bold=True
     )
     body.add_widget(close)
-    dialog_height = min(max(dp(270), Window.height * 0.52), Window.height * 0.78)
+    dialog_height = min(max(dp(270), Window.height * 0.38), Window.height * 0.60)
     dialog = Popup(
         title=str(title), content=body, size_hint=(0.92, None),
         height=dialog_height, auto_dismiss=False,
@@ -1011,7 +1011,7 @@ class AddProductScreen(Screen):
             self.ids.discount_toggle.text = "＋  Add Discount (Optional)"
             return
 
-        panel = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(226), spacing=dp(7))
+        panel = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(248), spacing=dp(7))
         heading = Label(
             text="[b]PRODUCT DISCOUNT[/b]", markup=True, size_hint_y=None, height=dp(25),
             color=(0.12, 0.25, 0.29, 1), font_size="14sp", halign="left"
