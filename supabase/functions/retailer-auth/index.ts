@@ -30,7 +30,7 @@ Deno.serve(async (req: Request) => {
     const action = String(payload.action || "");
     const username = String(payload.username || "").trim().toLowerCase();
     const password = String(payload.password || "");
-    let phone = String(payload.phone || "").replace(/[\\s()-]/g, "");
+    let phone = String(payload.phone || "").replace(/[\s()-]/g, "");
 
     if (!["signup", "login"].includes(action)) return reply(400, { error: "Invalid action" });
     if (!/^[a-z0-9_]{4,24}$/.test(username)) return reply(400, { error: "Username must be 4–24 letters, numbers or underscores" });
@@ -55,7 +55,7 @@ Deno.serve(async (req: Request) => {
     const authEmail = username + "@retailer.maherumar.invalid";
 
     if (action === "signup") {
-      if (!/^\\+92[0-9]{10}$/.test(phone)) return reply(400, { error: "Enter a valid Pakistani mobile number" });
+      if (!/^\+92[0-9]{10}$/.test(phone)) return reply(400, { error: "Enter a valid Pakistani mobile number" });
       const { data: existing } = await admin.from("retailer_accounts")
         .select("user_id").or("username.eq." + username + ",phone.eq." + phone).limit(1);
       if (existing && existing.length) return reply(409, { error: "Username or mobile number is already registered" });
