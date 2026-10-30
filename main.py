@@ -104,7 +104,7 @@ KV = r'''
 <AuthScreen>:
     BoxLayout:
         orientation: 'vertical'
-        padding: [dp(22), dp(24), dp(22), dp(20)]
+        padding: [dp(22), dp(28), dp(22), dp(22)]
         spacing: dp(10)
         canvas.before:
             Color:
@@ -113,60 +113,70 @@ KV = r'''
                 pos: self.pos
                 size: self.size
         Widget:
-            size_hint_y: 0.22
+            size_hint_y: 0.16
         PageHeading:
             text: 'MAHER UMAR POS'
             halign: 'center'
             height: dp(48)
             font_size: '25sp'
         Label:
-            text: 'SMART RETAIL MANAGEMENT'
+            text: 'SECURE RETAILER ACCOUNT'
             size_hint_y: None
             height: dp(24)
             font_size: '11sp'
             bold: True
             color: (0.055, 0.42, 0.48, 1)
         BoxLayout:
+            size_hint_y: None
+            height: dp(44)
+            spacing: dp(8)
+            SecondaryButton:
+                text: 'Create Account'
+                disabled: root.mode == 'signup'
+                on_release: root.set_mode('signup')
+            SecondaryButton:
+                text: 'Login'
+                disabled: root.mode == 'login'
+                on_release: root.set_mode('login')
+        BoxLayout:
             orientation: 'vertical'
             size_hint_y: None
             height: self.minimum_height
-            padding: [dp(20), dp(20), dp(20), dp(20)]
-            spacing: dp(11)
+            padding: [dp(18), dp(18), dp(18), dp(18)]
+            spacing: dp(10)
             canvas.before:
                 Color:
                     rgba: (1, 1, 1, 1)
                 RoundedRectangle:
                     pos: self.pos
                     size: self.size
-                    radius: [dp(18)]
+                    radius: [dp(16)]
             Label:
-                text: 'Welcome to your business'
+                text: 'Create your retailer account' if root.mode == 'signup' else 'Welcome back'
                 size_hint_y: None
                 height: dp(32)
-                font_size: '19sp'
+                font_size: '18sp'
                 bold: True
                 color: (0.07, 0.19, 0.23, 1)
                 halign: 'left'
                 text_size: self.size
-            Label:
-                text: 'Sign in securely with your mobile number. No password required.'
-                size_hint_y: None
-                height: dp(42)
-                font_size: '13sp'
-                color: (0.39, 0.47, 0.50, 1)
-                halign: 'left'
-                valign: 'middle'
-                text_size: self.width, None
             Field:
                 id: retailer_name
-                hint_text: 'Your full name'
+                hint_text: 'Customer / Retailer Name'
+                opacity: 1 if root.mode == 'signup' else 0
+                height: dp(48) if root.mode == 'signup' else dp(0)
+                disabled: root.mode != 'signup'
+            Field:
+                id: password
+                hint_text: 'Password (minimum 6 characters)'
+                password: True
             Field:
                 id: phone
                 hint_text: 'Mobile number (03XXXXXXXXX)'
                 input_filter: 'int'
             Field:
                 id: otp
-                hint_text: 'Enter 6-digit verification code'
+                hint_text: 'Enter 6-digit OTP'
                 input_filter: 'int'
                 opacity: 1 if root.otp_sent else 0
                 height: dp(48) if root.otp_sent else dp(0)
@@ -174,14 +184,14 @@ KV = r'''
             Label:
                 text: root.status_text
                 size_hint_y: None
-                height: dp(36)
+                height: dp(42)
                 font_size: '12sp'
                 color: (0.055, 0.42, 0.48, 1)
                 halign: 'left'
                 valign: 'middle'
                 text_size: self.width, None
             PrimaryButton:
-                text: 'Verify & Continue' if root.otp_sent else 'Send Secure OTP'
+                text: ('Verify OTP & Create Account' if root.mode == 'signup' else 'Verify OTP & Login') if root.otp_sent else ('Send Signup OTP' if root.mode == 'signup' else 'Verify Password & Send Login OTP')
                 on_release: root.primary_action()
             SecondaryButton:
                 text: 'Change mobile number'
@@ -189,7 +199,7 @@ KV = r'''
                 height: dp(44) if root.otp_sent else dp(0)
                 on_release: root.change_number()
         Label:
-            text: 'By continuing, you agree to receive an SMS verification code. Carrier charges may apply.'
+            text: 'Phone verification is required. SMS and network charges may apply.'
             size_hint_y: None
             height: dp(34)
             font_size: '10sp'
@@ -197,14 +207,8 @@ KV = r'''
             halign: 'center'
             valign: 'middle'
             text_size: self.width, None
-        Label:
-            text: 'Your business records stay on this device.'
-            size_hint_y: None
-            height: dp(26)
-            font_size: '11sp'
-            color: (0.43, 0.51, 0.54, 1)
         Widget:
-            size_hint_y: 0.22
+            size_hint_y: 0.16
 
 <MainScreen>:
     BoxLayout:
@@ -1102,10 +1106,14 @@ class Store:
 
 
 class AuthScreen(Screen):
+    mode = StringProperty("signup")
     otp_sent = BooleanProperty(False)
-    status_text = StringProperty("A one-time code will be sent to your mobile number.")
+    status_text = StringProperty("Create your account or sign in with your registered number.")
     _verification_id = None
     _otp_callback = None
+    _pending_attempt_id = None
+    _pending_action = None
+    _verifying_otp = False
 
     def _normalized_phone(self):
         digits = "".join(ch for ch in self.ids.phone.text if ch.isdigit())
@@ -1116,6 +1124,18 @@ class AuthScreen(Screen):
         if len(digits) == 10 and digits.startswith("3"):
             return "+92" + digits
         raise ValueError("Valid Pakistani mobile number enter karein, misal: 03XXXXXXXXX.")
+
+    def set_mode(self, mode):
+        if mode not in ("signup", "login"):
+            return
+        self.mode = mode
+        self.otp_sent = False
+        self._verification_id = None
+        self._pending_attempt_id = None
+        self._pending_action = None
+        self._verifying_otp = False
+        self.ids.otp.text = ""
+        self.status_text = "New retailer? Create your account." if mode == "signup" else "Enter your registered number and password."
 
     def primary_action(self):
         self.verify_otp() if self.otp_sent else self.send_otp()
@@ -1129,27 +1149,39 @@ class AuthScreen(Screen):
             @java_method("(Ljava/lang/String;)V")
             def onCodeSent(self, verification_id):
                 Clock.schedule_once(lambda dt: screen._on_code_sent(str(verification_id)), 0)
-            @java_method("(Ljava/lang/String;)V")
-            def onSignedIn(self, uid):
-                Clock.schedule_once(lambda dt: screen._on_signed_in(str(uid)), 0)
+            @java_method("(Ljava/lang/String;Ljava/lang/String;)V")
+            def onSignedIn(self, uid, id_token):
+                Clock.schedule_once(lambda dt: screen._on_signed_in(str(uid), str(id_token)), 0)
             @java_method("(Ljava/lang/String;)V")
             def onError(self, message):
                 Clock.schedule_once(lambda dt: screen._on_auth_error(str(message)), 0)
         return OtpCallback()
 
     def send_otp(self):
-        name = self.ids.retailer_name.text.strip()
-        if len(name) < 2 or len(name) > 60:
-            show_message("Apna naam 2 se 60 characters ke darmiyan enter karein.", "Name required")
+        name = self.ids.retailer_name.text.strip() if self.mode == "signup" else ""
+        password = self.ids.password.text
+        if self.mode == "signup" and (len(name) < 2 or len(name) > 60):
+            show_message("Customer / Retailer name 2 se 60 characters ke darmiyan enter karein.", "Name required")
+            return
+        if len(password) < 6 or len(password) > 72:
+            show_message("Password minimum 6 aur maximum 72 characters ka hona chahiye.", "Password required")
             return
         try:
             phone = self._normalized_phone()
+            app = App.get_running_app()
+            preflight = app.retailer_auth(
+                "request_otp", phone=phone, purpose=self.mode,
+                customer_name=name, password=password
+            )
+            self._pending_attempt_id = str(preflight.get("attempt_id") or "")
+            if not self._pending_attempt_id:
+                raise ValueError("OTP request authorize nahi ho saki. Dobara try karein.")
             from jnius import autoclass
             activity = autoclass("org.kivy.android.PythonActivity").mActivity
             bridge = autoclass("org.maherumar.maherumarpos.FirebaseOtpBridge")
-            app = App.get_running_app()
             if not app.firebase_ready:
                 raise ValueError("Firebase initialize nahi hua. Internet connection check karein.")
+            self._pending_action = self.mode
             self._otp_callback = self._make_callback()
             self.status_text = "Sending secure verification code…"
             bridge.sendCode(activity, phone, self._otp_callback)
@@ -1165,47 +1197,77 @@ class AuthScreen(Screen):
 
     def verify_otp(self):
         code = self.ids.otp.text.strip()
-        if not re.fullmatch(r"\d{6}", code):
+        if not re.fullmatch(r"\\d{6}", code):
             show_message("6-digit OTP enter karein.", "Invalid OTP")
             return
         if not self._verification_id:
-            show_message("OTP session expire ho gayi. Dobara code send karein.", "OTP expired")
+            show_message("OTP session expire ho gayi. Dobara code request karein.", "OTP expired")
             self.change_number()
             return
         try:
             from jnius import autoclass
             bridge = autoclass("org.maherumar.maherumarpos.FirebaseOtpBridge")
             self._otp_callback = self._make_callback()
+            self._verifying_otp = True
             self.status_text = "Verifying your code…"
             bridge.verifyCode(self._verification_id, code, self._otp_callback)
         except Exception as exc:
+            self._verifying_otp = False
             show_message(str(exc), "Verification error")
 
-    def _on_signed_in(self, uid):
+    def _on_signed_in(self, uid, id_token):
+        self._verifying_otp = False
         try:
-            name = self.ids.retailer_name.text.strip()
             phone = self._normalized_phone()
+            name = self.ids.retailer_name.text.strip() if self._pending_action == "signup" else ""
+            password = self.ids.password.text
+            action = "complete_signup" if self._pending_action == "signup" else "complete_login"
+            result = App.get_running_app().retailer_auth(
+                action, phone=phone, customer_name=name, password=password,
+                firebase_id_token=id_token, attempt_id=self._pending_attempt_id
+            )
             app = App.get_running_app()
-            app.activate_retailer(uid, name, phone)
+            account_name = result.get("customer_name") or name or "Retailer"
+            app.activate_retailer(uid, account_name, phone)
             self.otp_sent = False
             self._verification_id = None
+            self._pending_attempt_id = None
+            self._pending_action = None
             self.ids.otp.text = ""
-            self.status_text = "Verified successfully."
+            self.ids.password.text = ""
+            self.status_text = "Phone verified successfully."
             app.go("home")
             app.refresh_home()
-            show_message("Your mobile number is verified. Your business workspace is ready.", "Welcome")
+            show_message("Your phone number and account were verified. Your business workspace is ready.", "Welcome")
         except Exception as exc:
-            show_message("Login verified, but local workspace could not open: " + str(exc), "Workspace error")
+            self.status_text = "Account verification failed."
+            show_message(str(exc), "Account verification failed")
 
     def _on_auth_error(self, message):
-        self.status_text = "Verification failed. Please try again."
+        was_verifying = self._verifying_otp
+        self._verifying_otp = False
+        lowered = (message or "").lower()
+        if was_verifying and any(term in lowered for term in ("invalid-verification-code", "invalid verification code", "invalid code")):
+            try:
+                App.get_running_app().retailer_auth(
+                    "record_otp_failure", phone=self._normalized_phone(),
+                    attempt_id=self._pending_attempt_id
+                )
+                self.status_text = "Incorrect OTP. A 5-minute cooldown is now active."
+            except Exception:
+                self.status_text = "Incorrect OTP. Cooldown status could not be confirmed; contact support before retrying."
+        else:
+            self.status_text = "Verification failed. Please try again."
         show_message(message or "OTP verification failed. Try again.", "OTP error")
 
     def change_number(self):
         self.otp_sent = False
         self._verification_id = None
+        self._pending_attempt_id = None
+        self._pending_action = None
+        self._verifying_otp = False
         self.ids.otp.text = ""
-        self.status_text = "Check your mobile number, then request a new code."
+        self.status_text = "Check your mobile number and details, then request a new code."
 
 
 class MainScreen(Screen):
@@ -1888,18 +1950,23 @@ class MaherUmarPOSApp(App):
         self.go("auth")
         show_message("You have been signed out. This retailer's local database remains preserved.", "Signed out")
 
-    def retailer_auth(self, action, phone, username, password):
-        payload = json.dumps({"action": action, "phone": phone, "username": username, "password": password}).encode("utf-8")
+    def retailer_auth(self, action, **fields):
+        payload = {"action": action}
+        payload.update(fields)
+        encoded = json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
             SUPABASE_URL + "/functions/v1/retailer-auth",
-            data=payload,
+            data=encoded,
             headers={"apikey": SUPABASE_PUBLISHABLE_KEY, "Authorization": "Bearer " + SUPABASE_PUBLISHABLE_KEY,
                      "Content-Type": "application/json"},
             method="POST"
         )
         try:
             with urllib.request.urlopen(request, timeout=25) as response:
-                return json.loads(response.read().decode("utf-8"))
+                result = json.loads(response.read().decode("utf-8"))
+                if not isinstance(result, dict):
+                    raise ValueError("Authentication service returned an invalid response.")
+                return result
         except urllib.error.HTTPError as exc:
             try:
                 detail = json.loads(exc.read().decode("utf-8")).get("error", "Request rejected")
