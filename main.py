@@ -1243,6 +1243,8 @@ class AuthScreen(Screen):
                 action, phone=phone, customer_name=name, password=password,
                 firebase_id_token=id_token, attempt_id=self._pending_attempt_id
             )
+            if result.get("success") is not True or result.get("firebase_uid") != uid:
+                raise ValueError("Server could not confirm this verified retailer account.")
             app = App.get_running_app()
             account_name = result.get("customer_name") or name or "Retailer"
             app.activate_retailer(uid, account_name, phone)
