@@ -84,8 +84,6 @@ jobs:
           rm -rf .app-source
           mkdir -p .app-source
           cp main.py .app-source/main.py
-          test -d android-src/org/maherumar/maherumarpos
-          cp -R android-src .app-source/android-src
           base64 -d app_icon.png.b64 > app_icon.png
           cp app_icon.png .app-source/app_icon.png
 
