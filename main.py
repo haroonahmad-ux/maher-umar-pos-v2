@@ -1114,6 +1114,8 @@ class AuthScreen(Screen):
     _pending_attempt_id = None
     _pending_action = None
     _verifying_otp = False
+    _daily_remaining = 0
+    _monthly_remaining = 0
 
     def _normalized_phone(self):
         digits = "".join(ch for ch in self.ids.phone.text if ch.isdigit())
@@ -1174,6 +1176,8 @@ class AuthScreen(Screen):
                 customer_name=name, password=password
             )
             self._pending_attempt_id = str(preflight.get("attempt_id") or "")
+            self._daily_remaining = int(preflight.get("daily_remaining", 0))
+            self._monthly_remaining = int(preflight.get("monthly_remaining", 0))
             if not self._pending_attempt_id:
                 raise ValueError("OTP request authorize nahi ho saki. Dobara try karein.")
             from jnius import autoclass
@@ -1193,7 +1197,9 @@ class AuthScreen(Screen):
         self._verification_id = verification_id
         self.otp_sent = True
         self.ids.otp.text = ""
-        self.status_text = "Code sent. Enter the 6-digit code received by SMS."
+        self.status_text = ("Code sent. Enter the 6-digit SMS code. Remaining after this: "
+                            + str(self._daily_remaining) + " today, "
+                            + str(self._monthly_remaining) + " this month.")
 
     def verify_otp(self):
         code = self.ids.otp.text.strip()
@@ -1247,7 +1253,7 @@ class AuthScreen(Screen):
         was_verifying = self._verifying_otp
         self._verifying_otp = False
         lowered = (message or "").lower()
-        if was_verifying and any(term in lowered for term in ("invalid-verification-code", "invalid verification code", "invalid code")):
+        if was_verifying and ("invalid-verification-code" in lowered or ("invalid" in lowered and ("code" in lowered or "otp" in lowered))):
             try:
                 App.get_running_app().retailer_auth(
                     "record_otp_failure", phone=self._normalized_phone(),
