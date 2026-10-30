@@ -186,8 +186,11 @@ KV = r'''
                         text: 'Udhaar Book'
                         on_release: app.go('udhaar')
                     SecondaryButton:
-                        text: 'Database Backup'
-                        on_release: app.backup_database()
+                        text: 'Export Backup'
+                        on_release: app.export_database_backup()
+                    SecondaryButton:
+                        text: 'Import / Restore Backup'
+                        on_release: app.import_database_backup()
                     SecondaryButton:
                         text: 'Refresh Dashboard'
                         on_release: root.refresh_summary()
@@ -870,6 +873,16 @@ class Store:
             self.conn.execute("UPDATE products SET stock=stock+? WHERE id=?", (quantity, matches[0]["id"]))
         return matches[0]["id"]
 
+    def update_product_prices(self, product_id, purchase, sale):
+        purchase, sale = float(purchase), float(sale)
+        if purchase <= 0 or sale <= 0:
+            raise ValueError("Cost aur selling price 0 se zyada honi chahiye.")
+        with self.conn:
+            cur = self.conn.execute("UPDATE products SET purchase_price=?, sale_price=? WHERE id=?",
+                                    (purchase, sale, int(product_id)))
+            if cur.rowcount != 1:
+                raise ValueError("Saved product nahi mila.")
+
     def add_product(self, name, category, purchase, sale, stock, discount_percent=0,
                     discount_start_date="", discount_end_date="", discount_min_qty=0):
         name = name.strip()
@@ -1141,6 +1154,37 @@ class StockScreen(Screen):
         popup.open()
 
     @staticmethod
+    def edit_product_prices(product):
+        body = DialogBody(orientation="vertical", padding=dp(12), spacing=dp(8))
+        body.add_widget(Label(text=str(product["name"]), size_hint_y=None, height=dp(30),
+                              color=(0.08,0.16,0.18,1), halign="left"))
+        cost = TextInput(text=str(product["purchase_price"]), hint_text="Cost / purchase price (Rs.)",
+                         input_filter="float", multiline=False, size_hint_y=None, height=dp(48))
+        selling = TextInput(text=str(product["sale_price"]), hint_text="Selling price (Rs.)",
+                            input_filter="float", multiline=False, size_hint_y=None, height=dp(48))
+        body.add_widget(cost); body.add_widget(selling)
+        body.add_widget(Label(text="Only future sales use these prices. Past sale records remain unchanged.",
+                              size_hint_y=None, height=dp(42), color=(0.35,0.43,0.46,1), font_size="12sp"))
+        row = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(8))
+        cancel = Button(text="Cancel", background_normal="", background_color=(0.88,0.94,0.95,1), color=(0.07,0.26,0.31,1))
+        save = Button(text="Save prices", background_normal="", background_color=(0.055,0.34,0.42,1), color=(1,1,1,1), bold=True)
+        row.add_widget(cancel); row.add_widget(save); body.add_widget(row)
+        popup = Popup(title="Update product prices", content=body, size_hint=(0.92,None), height=dp(310),
+                      auto_dismiss=False, background_color=(1,1,1,1),
+                      title_color=(0.08,0.16,0.18,1), separator_color=(0.08,0.52,0.30,1))
+        cancel.bind(on_release=popup.dismiss)
+        def save_prices(*_):
+            try:
+                App.get_running_app().store.update_product_prices(product["id"], float(cost.text or 0), float(selling.text or 0))
+                popup.dismiss()
+                App.get_running_app().root.get_screen("stock").refresh()
+                show_message("Cost and selling prices updated. Past sales history remains unchanged.", "Prices updated")
+            except (ValueError, sqlite3.Error) as exc:
+                show_message(str(exc), "Check price details")
+        save.bind(on_release=save_prices)
+        popup.open()
+
+    @staticmethod
     def edit_product_discount(product):
         store = App.get_running_app().store
         active = float(product["discount_percent"] or 0) > 0
@@ -1295,7 +1339,10 @@ class StockScreen(Screen):
                 halign="left", valign="middle", text_size=(Window.width - dp(60), None)
             )
             card.add_widget(offer)
-        actions = BoxLayout(size_hint_y=None, height=dp(32), spacing=dp(6))
+        actions = BoxLayout(size_hint_y=None, height=dp(36), spacing=dp(6))
+        price_edit = Button(text="Update prices", background_normal="", background_down="",
+                            background_color=(0.055,0.34,0.42,1), color=(1,1,1,1), font_size="11sp")
+        price_edit.bind(on_release=lambda *_args, p=dict(product): StockScreen.edit_product_prices(p))
         edit = Button(
             text="Edit discount" if has_discount else "Add discount",
             background_normal="", background_down="",
@@ -1303,6 +1350,7 @@ class StockScreen(Screen):
             color=(0.07, 0.26, 0.31, 1), font_size="11sp"
         )
         edit.bind(on_release=lambda *_args, p=dict(product): StockScreen.edit_product_discount(p))
+        actions.add_widget(price_edit)
         actions.add_widget(edit)
         card.add_widget(actions)
         return card
@@ -1551,6 +1599,102 @@ class MaherUmarPOSApp(App):
         try:
             path = self.store.backup(); show_message(f"Database backup created successfully:\n{path}\n\nKeep a copy outside the app as well.", "Backup complete")
         except Exception as exc: show_message(f"Backup failed: {exc}", "Backup error")
+    def export_database_backup(self):
+        try:
+            from android import activity
+            from jnius import autoclass
+            Intent = autoclass("android.content.Intent")
+            intent = Intent(Intent.ACTION_CREATE_DOCUMENT)
+            intent.addCategory(Intent.CATEGORY_OPENABLE)
+            intent.setType("application/octet-stream")
+            intent.putExtra(Intent.EXTRA_TITLE, "maher_umar_backup_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".db")
+            activity.bind(on_activity_result=self._on_export_backup_result)
+            autoclass("org.kivy.android.PythonActivity").mActivity.startActivityForResult(intent, 7411)
+        except Exception as exc:
+            show_message("Export start nahi ho saka: " + str(exc), "Export unavailable")
+
+    def _on_export_backup_result(self, request_code, result_code, intent):
+        if request_code != 7411: return
+        try:
+            from android import activity
+            from jnius import autoclass, jarray
+            activity.unbind(on_activity_result=self._on_export_backup_result)
+            if result_code != -1 or intent is None:
+                show_message("Backup export cancel kar diya gaya.", "Export cancelled"); return
+            backup_path = self.store.backup()
+            resolver = autoclass("org.kivy.android.PythonActivity").mActivity.getContentResolver()
+            output = resolver.openOutputStream(intent.getData())
+            if output is None: raise IOError("Selected destination open nahi ho saki.")
+            try:
+                with open(backup_path, "rb") as source:
+                    while True:
+                        chunk = source.read(65536)
+                        if not chunk: break
+                        output.write(jarray("b")([b if b < 128 else b - 256 for b in chunk]))
+                output.flush()
+            finally: output.close()
+            show_message("Backup selected folder mein export ho gaya.", "Backup exported")
+        except Exception as exc:
+            show_message("Backup export failed: " + str(exc), "Export error")
+
+    def import_database_backup(self):
+        try:
+            from android import activity
+            from jnius import autoclass
+            Intent = autoclass("android.content.Intent")
+            intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
+            intent.addCategory(Intent.CATEGORY_OPENABLE)
+            intent.setType("*/*")
+            activity.bind(on_activity_result=self._on_import_backup_result)
+            autoclass("org.kivy.android.PythonActivity").mActivity.startActivityForResult(intent, 7412)
+        except Exception as exc:
+            show_message("Import start nahi ho saka: " + str(exc), "Import unavailable")
+
+    def _on_import_backup_result(self, request_code, result_code, intent):
+        if request_code != 7412: return
+        temp_path = self.store.db_path + ".restore.tmp"
+        try:
+            from android import activity
+            from jnius import autoclass, jarray
+            activity.unbind(on_activity_result=self._on_import_backup_result)
+            if result_code != -1 or intent is None:
+                show_message("Restore cancel kar diya gaya. Existing data safe hai.", "Restore cancelled"); return
+            resolver = autoclass("org.kivy.android.PythonActivity").mActivity.getContentResolver()
+            stream = resolver.openInputStream(intent.getData())
+            if stream is None: raise IOError("Selected file read nahi ho saki.")
+            try:
+                buf = jarray("b")([0] * 65536)
+                with open(temp_path, "wb") as target:
+                    while True:
+                        count = stream.read(buf)
+                        if count <= 0: break
+                        target.write(bytes((int(buf[i]) & 255) for i in range(count)))
+            finally: stream.close()
+            check = sqlite3.connect(temp_path)
+            try:
+                integrity = check.execute("PRAGMA integrity_check").fetchone()[0]
+                tables = {r[0] for r in check.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                if integrity != "ok" or not {"products","sales","sale_items","expenses"}.issubset(tables):
+                    raise ValueError("Yeh valid POS backup nahi hai. Existing data unchanged hai.")
+            finally: check.close()
+            safety_copy = self.store.backup()
+            db_path = self.store.db_path
+            self.store.conn.close()
+            try:
+                os.replace(temp_path, db_path)
+                self.store = Store(db_path)
+            except Exception:
+                if os.path.exists(safety_copy): shutil.copy2(safety_copy, db_path)
+                self.store = Store(db_path)
+                raise
+            self.refresh_home()
+            show_message("Backup restore ho gaya. Restore se pehle current database ki safety copy bhi banayi gayi.", "Restore complete")
+        except Exception as exc:
+            try:
+                if os.path.exists(temp_path): os.remove(temp_path)
+            except OSError: pass
+            show_message("Restore failed: " + str(exc) + "\\nExisting database ko preserve kiya gaya.", "Restore error")
+
     def generate_invoice(self, sale_id, customer, phone, items, subtotal, discount, net, paid, due, change=0):
         """Write a lightweight one-page PDF using built-in PDF syntax (no extra package)."""
         folder = os.path.join(self.user_data_dir, "Invoices")
