@@ -192,6 +192,7 @@ KV = r'''
                 text_size: self.width, None
             PrimaryButton:
                 text: ('Verify OTP & Create Account' if root.mode == 'signup' else 'Verify OTP & Login') if root.otp_sent else ('Send Signup OTP' if root.mode == 'signup' else 'Verify Password & Send Login OTP')
+                disabled: root.busy
                 on_release: root.primary_action()
             SecondaryButton:
                 text: 'Change mobile number'
@@ -1114,6 +1115,7 @@ class AuthScreen(Screen):
     _pending_attempt_id = None
     _pending_action = None
     _verifying_otp = False
+    busy = BooleanProperty(False)
     _daily_remaining = 0
     _monthly_remaining = 0
 
@@ -1136,10 +1138,13 @@ class AuthScreen(Screen):
         self._pending_attempt_id = None
         self._pending_action = None
         self._verifying_otp = False
+        self.busy = False
         self.ids.otp.text = ""
         self.status_text = "New retailer? Create your account." if mode == "signup" else "Enter your registered number and password."
 
     def primary_action(self):
+        if self.busy:
+            return
         self.verify_otp() if self.otp_sent else self.send_otp()
 
     def _make_callback(self):
@@ -1169,6 +1174,7 @@ class AuthScreen(Screen):
             show_message("Password minimum 6 aur maximum 72 characters ka hona chahiye.", "Password required")
             return
         try:
+            self.busy = True
             phone = self._normalized_phone()
             app = App.get_running_app()
             preflight = app.retailer_auth(
@@ -1190,10 +1196,12 @@ class AuthScreen(Screen):
             self.status_text = "Sending secure verification code…"
             bridge.sendCode(activity, phone, self._otp_callback)
         except Exception as exc:
+            self.busy = False
             self.status_text = "Could not start verification."
             show_message(str(exc), "OTP unavailable")
 
     def _on_code_sent(self, verification_id):
+        self.busy = False
         self._verification_id = verification_id
         self.otp_sent = True
         self.ids.otp.text = ""
@@ -1215,14 +1223,17 @@ class AuthScreen(Screen):
             bridge = autoclass("org.maherumar.maherumarpos.FirebaseOtpBridge")
             self._otp_callback = self._make_callback()
             self._verifying_otp = True
+            self.busy = True
             self.status_text = "Verifying your code…"
             bridge.verifyCode(self._verification_id, code, self._otp_callback)
         except Exception as exc:
             self._verifying_otp = False
+            self.busy = False
             show_message(str(exc), "Verification error")
 
     def _on_signed_in(self, uid, id_token):
         self._verifying_otp = False
+        self.busy = True
         try:
             phone = self._normalized_phone()
             name = self.ids.retailer_name.text.strip() if self._pending_action == "signup" else ""
@@ -1242,16 +1253,19 @@ class AuthScreen(Screen):
             self.ids.otp.text = ""
             self.ids.password.text = ""
             self.status_text = "Phone verified successfully."
+            self.busy = False
             app.go("home")
             app.refresh_home()
             show_message("Your phone number and account were verified. Your business workspace is ready.", "Welcome")
         except Exception as exc:
+            self.busy = False
             self.status_text = "Account verification failed."
             show_message(str(exc), "Account verification failed")
 
     def _on_auth_error(self, message):
         was_verifying = self._verifying_otp
         self._verifying_otp = False
+        self.busy = False
         lowered = (message or "").lower()
         if was_verifying and ("invalid-verification-code" in lowered or ("invalid" in lowered and ("code" in lowered or "otp" in lowered))):
             try:
@@ -1272,6 +1286,7 @@ class AuthScreen(Screen):
         self._pending_attempt_id = None
         self._pending_action = None
         self._verifying_otp = False
+        self.busy = False
         self.ids.otp.text = ""
         self.status_text = "Check your mobile number and details, then request a new code."
 
