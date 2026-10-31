@@ -77,6 +77,15 @@ KV = r'''
     background_color: (0.12, 0.36, 0.88, 1)
     color: (1, 1, 1, 1)
     font_size: '14sp'
+<SuccessButton@Button>:
+    size_hint_y: None
+    height: dp(44)
+    background_normal: ''
+    background_down: ''
+    background_color: (0.10, 0.58, 0.30, 1)
+    color: (1, 1, 1, 1)
+    font_size: '14sp'
+    bold: True
 <SignOutIconButton@Button>:
     canvas.after:
         Color:
@@ -98,11 +107,11 @@ KV = r'''
         Color:
             rgba: (1, 1, 1, 1)
         Ellipse:
-            pos: self.center_x - dp(8), self.center_y - dp(5)
-            size: dp(14), dp(14)
+            pos: self.center_x - dp(10), self.center_y - dp(7)
+            size: dp(18), dp(18)
         Line:
-            points: [self.center_x + dp(5), self.center_y - dp(5), self.center_x + dp(11), self.center_y - dp(11)]
-            width: dp(2.5)
+            points: [self.center_x + dp(6), self.center_y - dp(7), self.center_x + dp(15), self.center_y - dp(16)]
+            width: dp(3)
 <Field@TextInput>:
     size_hint_y: None
     height: dp(48)
@@ -286,21 +295,22 @@ KV = r'''
                         Label:
                             text: '[b]Welcome to BizCore[/b]'
                             markup: True
-                            font_size: '19sp'
+                            font_size: '15sp'
                             color: (0.07, 0.19, 0.23, 1)
                             halign: 'left'
                             valign: 'bottom'
                             text_size: self.size
                         Label:
-                            text: root.retailer_name
-                            font_size: '16sp'
+                            text: '[b]' + root.retailer_name + '[/b]'
+                            markup: True
+                            font_size: '19sp'
                             color: (0.20, 0.31, 0.35, 1)
                             halign: 'left'
                             valign: 'top'
                             text_size: self.size
                     SearchIconButton:
                         size_hint: None, None
-                        size: dp(42), dp(42)
+                        size: dp(48), dp(48)
                         on_release: app.open_quick_search()
                     SignOutIconButton:
                         size_hint: None, None
@@ -498,10 +508,10 @@ KV = r'''
                     orientation: 'vertical'
                     size_hint_y: None
                     height: dp(0)
-                PrimaryButton:
+                SecondaryButton:
                     text: 'Save Product'
                     on_release: root.add_product()
-                SecondaryButton:
+                SuccessButton:
                     text: 'Import CSV File'
                     on_release: app.import_products_csv()
         SecondaryButton:
@@ -1883,8 +1893,13 @@ class SaleScreen(Screen):
             popup.dismiss(); self.cart = []; self.ids.phone.text = ""; self.update_cart()
             App.get_running_app().refresh_home()
             message = f"Sale #{sale_id} saved successfully.\nSubtotal: {money(subtotal)}\nDiscount: {money(discount)}\nPayable: {money(net)}\nAmount tendered: {money(received_amount)}\nChange to return: {money(change)}\nOutstanding due: {money(due)}"
-            if invoice_path: message += f"\n\nInvoice saved at:\n{invoice_path}"
-            Clock.schedule_once(lambda _dt, text=message: show_message(text, "Sale completed"), 0.25)
+            if invoice_path:
+                message += f"\n\nInvoice PDF generated successfully and saved to:\n{invoice_path}"
+                title = "Sale completed — invoice saved"
+            else:
+                message += "\n\nIMPORTANT: Sale save ho gayi, lekin invoice PDF Downloads mein generate nahi ho saki. Storage/Downloads access check karein."
+                title = "Sale saved — invoice failed"
+            Clock.schedule_once(lambda _dt, text=message, heading=title: show_message(text, heading), 0.25)
         except (ValueError, sqlite3.Error) as exc:
             popup.dismiss()
             Clock.schedule_once(lambda _dt, text=str(exc): show_message(text, "Sale not saved"), 0.25)
@@ -2207,114 +2222,238 @@ class MaherUmarPOSApp(App):
         try:
             from android import activity
             from jnius import autoclass
-            Intent=autoclass("android.content.Intent")
-            intent=Intent(Intent.ACTION_OPEN_DOCUMENT); intent.addCategory(Intent.CATEGORY_OPENABLE); intent.setType("text/*")
+            Intent = autoclass("android.content.Intent")
+            intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
+            intent.addCategory(Intent.CATEGORY_OPENABLE)
+            # Android providers label CSV files inconsistently; validate after picking.
+            intent.setType("*/*")
+            intent.putExtra(Intent.EXTRA_TITLE, "Select BizCore CSV file")
             activity.bind(on_activity_result=self._on_import_csv_result)
-            autoclass("org.kivy.android.PythonActivity").mActivity.startActivityForResult(intent,7413)
-        except Exception as exc: show_message("CSV picker open nahi ho saka: "+str(exc),"CSV import unavailable")
+            autoclass("org.kivy.android.PythonActivity").mActivity.startActivityForResult(intent, 7413)
+        except Exception as exc:
+            try:
+                activity.unbind(on_activity_result=self._on_import_csv_result)
+            except Exception:
+                pass
+            show_message("CSV picker open nahi ho saka: " + str(exc), "CSV import unavailable")
 
     def _on_import_csv_result(self, request_code, result_code, intent):
-        if request_code!=7413: return
+        if request_code != 7413:
+            return
         try:
             from android import activity
             from jnius import autoclass, jarray
             activity.unbind(on_activity_result=self._on_import_csv_result)
-            if result_code!=-1 or intent is None:
-                show_message("CSV import cancelled. Existing products unchanged.","Import cancelled"); return
-            resolver=autoclass("org.kivy.android.PythonActivity").mActivity.getContentResolver()
-            stream=resolver.openInputStream(intent.getData())
-            if stream is None: raise IOError("CSV file read nahi ho saki.")
-            data=bytearray(); buf=jarray("b")([0]*65536)
+            if result_code != -1 or intent is None or intent.getData() is None:
+                show_message("CSV import cancelled. Existing products unchanged.", "Import cancelled")
+                return
+            resolver = autoclass("org.kivy.android.PythonActivity").mActivity.getContentResolver()
+            stream = resolver.openInputStream(intent.getData())
+            if stream is None:
+                raise IOError("Selected file read nahi ho saki.")
+            data = bytearray()
+            buf = jarray("b")([0] * 65536)
             try:
                 while True:
-                    count=stream.read(buf)
-                    if count<=0: break
+                    count = stream.read(buf)
+                    if count <= 0:
+                        break
                     data.extend((int(buf[i]) & 255) for i in range(count))
-            finally: stream.close()
-            reader=csv.DictReader(io.StringIO(bytes(data).decode("utf-8-sig")))
-            if not reader.fieldnames: raise ValueError("CSV header row missing hai.")
-            aliases={"name":("product_name","name","product"),"category":("category","product_category"),"cost":("cost_price","purchase_price","cost","buy_price"),"selling":("selling_price","sale_price","selling","sell_price"),"qty":("quantity","stock","opening_quantity","qty"),"discount":("discount_percent","discount","discount_percentage"),"expiry":("discount_expiry","expiry_date","expire_date"),"minqty":("minimum_quantity","discount_min_qty","min_quantity")}
-            parsed=[]
-            for line,row in enumerate(reader,start=2):
-                values={str(k or "").strip().lower().replace(" ","_"):(v or "").strip() for k,v in row.items()}
-                def get(field,default=""): return next((values[k] for k in aliases[field] if k in values),default)
-                name=correct_product_spelling(get("name"))
-                if not name: raise ValueError(f"CSV row {line}: Product Name missing.")
-                category=detect_category(name,get("category"))
-                cost=float(get("cost","0") or 0); selling=float(get("selling","0") or 0); qty=int(float(get("qty","0") or 0)); pct=float(get("discount","0") or 0)
-                if cost<0 or selling<0 or qty<0 or pct<0 or pct>=100: raise ValueError(f"CSV row {line}: price, quantity ya discount invalid.")
-                start=end=""; minqty=0
+            finally:
+                stream.close()
+            reader = csv.DictReader(io.StringIO(bytes(data).decode("utf-8-sig")))
+            if not reader.fieldnames:
+                raise ValueError("CSV header row missing hai.")
+            aliases = {
+                "name": ("product_name", "name", "product"),
+                "category": ("category", "product_category"),
+                "cost": ("cost_price", "purchase_price", "cost", "buy_price"),
+                "selling": ("selling_price", "sale_price", "selling", "sell_price"),
+                "qty": ("quantity", "stock", "opening_quantity", "qty"),
+                "discount": ("discount_percent", "discount", "discount_percentage"),
+                "expiry": ("discount_expiry", "expiry_date", "expire_date"),
+                "minqty": ("minimum_quantity", "discount_min_qty", "min_quantity")
+            }
+            parsed = []
+            for line, row in enumerate(reader, start=2):
+                values = {
+                    str(k or "").strip().lower().replace(" ", "_"): (v or "").strip()
+                    for k, v in row.items() if k is not None
+                }
+                def get(field, default=""):
+                    return next((values[k] for k in aliases[field] if k in values), default)
+                name = correct_product_spelling(get("name"))
+                if not name:
+                    raise ValueError(f"CSV row {line}: Product Name missing.")
+                category = detect_category(name, get("category"))
+                try:
+                    cost = float(get("cost", "0") or 0)
+                    selling = float(get("selling", "0") or 0)
+                    qty_value = float(get("qty", "0") or 0)
+                    pct = float(get("discount", "0") or 0)
+                except ValueError:
+                    raise ValueError(f"CSV row {line}: price, quantity ya discount number mein hona chahiye.")
+                if any(v != v or abs(v) == float("inf") for v in (cost, selling, qty_value, pct)):
+                    raise ValueError(f"CSV row {line}: invalid numeric value.")
+                if cost < 0 or selling < 0 or qty_value < 0 or not qty_value.is_integer() or pct < 0 or pct >= 100:
+                    raise ValueError(f"CSV row {line}: price, whole-number quantity ya discount invalid.")
+                qty = int(qty_value)
+                start = end = ""
+                minqty = 0
                 if pct:
-                    digits="".join(ch for ch in get("expiry") if ch.isdigit())
-                    if len(digits) not in (4,8): raise ValueError(f"CSV row {line}: discount expiry DD-MM-YYYY ya DDMM format mein dein.")
-                    day,month=int(digits[:2]),int(digits[2:4]); year=int(digits[4:8]) if len(digits)==8 else datetime.now().year
-                    end_date=datetime(year,month,day).date()
-                    if end_date<datetime.now().date(): raise ValueError(f"CSV row {line}: discount expiry past date hai.")
-                    start=datetime.now().strftime("%Y-%m-%d"); end=end_date.strftime("%Y-%m-%d"); minqty=int(float(get("minqty","0") or 0))
-                    if minqty<=0: raise ValueError(f"CSV row {line}: discounted product ke liye minimum quantity lazmi hai.")
-                parsed.append((name,category,cost,selling,qty,pct,start,end,minqty))
-            if not parsed: raise ValueError("CSV file mein products nahi hain.")
-            seen=set()
+                    digits = "".join(ch for ch in get("expiry") if ch.isdigit())
+                    if len(digits) not in (4, 8):
+                        raise ValueError(f"CSV row {line}: discount expiry DD-MM-YYYY ya DDMM format mein dein.")
+                    day, month = int(digits[:2]), int(digits[2:4])
+                    year = int(digits[4:8]) if len(digits) == 8 else datetime.now().year
+                    end_date = datetime(year, month, day).date()
+                    if end_date < datetime.now().date():
+                        raise ValueError(f"CSV row {line}: discount expiry past date hai.")
+                    start = datetime.now().strftime("%Y-%m-%d")
+                    end = end_date.strftime("%Y-%m-%d")
+                    minqty = int(float(get("minqty", "0") or 0))
+                    if minqty <= 0:
+                        raise ValueError(f"CSV row {line}: discounted product ke liye minimum quantity lazmi hai.")
+                parsed.append((name, category, cost, selling, qty, pct, start, end, minqty))
+            if not parsed:
+                raise ValueError("CSV file mein products nahi hain.")
+            seen = set()
             for row in parsed:
-                key=row[0].casefold()
-                if key in seen or self.store.conn.execute("SELECT 1 FROM products WHERE LOWER(name)=LOWER(?)",(row[0],)).fetchone():
-                    raise ValueError(f"Duplicate product: {row[0]}. CSV cancelled; no rows added.")
+                key = row[0].casefold()
+                if key in seen:
+                    raise ValueError(f"CSV mein duplicate product name mila: {row[0]}. Koi data import nahi hua.")
                 seen.add(key)
+            added = updated = 0
+            now = datetime.now().isoformat(timespec="seconds")
+            # Re-importing the same stock sheet updates matching products, not duplicate rows.
             with self.store.conn:
                 for row in parsed:
-                    self.store.conn.execute("INSERT INTO products(name,category,purchase_price,sale_price,stock,created_at,discount_percent,discount_start_date,discount_end_date,discount_min_qty) VALUES(?,?,?,?,?,?,?,?,?,?)",(row[0],row[1],row[2],row[3],row[4],datetime.now().isoformat(timespec="seconds"),row[5],row[6],row[7],row[8]))
+                    existing = self.store.conn.execute(
+                        "SELECT id FROM products WHERE LOWER(name)=LOWER(?)", (row[0],)
+                    ).fetchone()
+                    if existing:
+                        self.store.conn.execute(
+                            "UPDATE products SET category=?, purchase_price=?, sale_price=?, stock=?, "
+                            "discount_percent=?, discount_start_date=?, discount_end_date=?, discount_min_qty=? WHERE id=?",
+                            (row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], existing[0])
+                        )
+                        updated += 1
+                    else:
+                        self.store.conn.execute(
+                            "INSERT INTO products(name,category,purchase_price,sale_price,stock,created_at,discount_percent,discount_start_date,discount_end_date,discount_min_qty) "
+                            "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                            (row[0], row[1], row[2], row[3], row[4], now, row[5], row[6], row[7], row[8])
+                        )
+                        added += 1
             self.refresh_home()
             self.root.get_screen("stock").refresh()
-            show_message(f"{len(parsed)} products added successfully to Stock Management.","Products Added Successfully")
+            show_message(
+                f"CSV import complete. Added: {added} products. Updated: {updated} products. "
+                f"Total processed: {len(parsed)}. Stock Management refreshed successfully.",
+                "CSV Import Successful"
+            )
         except Exception as exc:
-            show_message("CSV import failed: "+str(exc)+"\nNo partial import was kept.","CSV import error")
+            try:
+                from android import activity
+                activity.unbind(on_activity_result=self._on_import_csv_result)
+            except Exception:
+                pass
+            show_message("CSV import failed: " + str(exc) + "\nNo partial import was kept.", "CSV import error")
 
     def generate_invoice(self, sale_id, customer, phone, items, subtotal, discount, net, paid, due, change=0):
-        """Write a lightweight one-page PDF using built-in PDF syntax (no extra package)."""
-        folder = os.path.join(self.user_data_dir, "Invoices")
-        os.makedirs(folder, exist_ok=True)
-        path = os.path.join(folder, f"invoice_{sale_id:06d}.pdf")
-        lines = [SHOP_NAME, "CUSTOMER INVOICE", "="*48, f"Invoice: {sale_id}", f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", f"Customer: {customer}", f"Phone: {phone or '-'}", "-"*48]
+        """Create a PDF invoice and save it to the public Android Downloads folder."""
+        filename = f"BizCore_Invoice_{sale_id:06d}.pdf"
+        lines = [SHOP_NAME, "CUSTOMER INVOICE", "="*48, f"Invoice: {sale_id}",
+                 f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                 f"Customer: {customer}", f"Phone: {phone or '-'}", "-"*48]
         for item in items:
             lines.append(f"{item['name']} ({item['category']})")
             lines.append(f"  {item['quantity']} x {money(item['price'])} = {money(item['quantity']*item['price'])}")
             item_discount = float(item.get("discount_amount", 0) or 0)
             if item_discount:
                 lines.append(f"  Automatic product discount: -{money(item_discount)}")
-        lines += ["-"*48, f"Subtotal: {money(subtotal)}", f"Discount: {money(discount)}", f"FINAL PAYABLE: {money(net)}", f"Amount received: {money(paid)}", f"Change returned: {money(change)}", f"Balance due: {money(due)}", "Thank you for shopping with us!"]
-        # Use a standard Helvetica font and escape PDF string literals.
+        lines += ["-"*48, f"Subtotal: {money(subtotal)}", f"Discount: {money(discount)}",
+                  f"FINAL PAYABLE: {money(net)}", f"Amount received: {money(paid)}",
+                  f"Change returned: {money(change)}", f"Balance due: {money(due)}",
+                  "Thank you for shopping with us!"]
         def esc(value):
             value = str(value).encode("ascii", "replace").decode("ascii")
             return value.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+        content = ["BT", "/F1 10 Tf", "48 800 Td", "14 TL"]
+        for index, line in enumerate(lines):
+            if index:
+                content.append("T*")
+            content.append(f"({esc(line)}) Tj")
+        content.append("ET")
+        stream = "\n".join(content).encode("latin-1", "replace")
+        objects = [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream"
+        ]
+        pdf = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+        offsets = [0]
+        for number, obj in enumerate(objects, 1):
+            offsets.append(len(pdf))
+            pdf.extend(f"{number} 0 obj\n".encode("ascii") + obj + b"\nendobj\n")
+        xref = len(pdf)
+        pdf.extend(f"xref\n0 {len(objects)+1}\n0000000000 65535 f \n".encode("ascii"))
+        for offset in offsets[1:]:
+            pdf.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+        pdf.extend(f"trailer\n<< /Size {len(objects)+1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF".encode("ascii"))
         try:
-            content = ["BT", "/F1 10 Tf", "48 800 Td", "14 TL"]
-            for index, line in enumerate(lines):
-                if index:
-                    content.append("T*")
-                content.append(f"({esc(line)}) Tj")
-            content.append("ET")
-            stream = "\n".join(content).encode("latin-1", "replace")
-            objects = [
-                b"<< /Type /Catalog /Pages 2 0 R >>",
-                b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
-                b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-                b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream"
-            ]
-            pdf = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
-            offsets = [0]
-            for number, obj in enumerate(objects, 1):
-                offsets.append(len(pdf))
-                pdf.extend(f"{number} 0 obj\n".encode("ascii") + obj + b"\nendobj\n")
-            xref = len(pdf)
-            pdf.extend(f"xref\n0 {len(objects)+1}\n0000000000 65535 f \n".encode("ascii"))
-            for offset in offsets[1:]:
-                pdf.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
-            pdf.extend(f"trailer\n<< /Size {len(objects)+1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF".encode("ascii"))
-            with open(path, "wb") as f: f.write(pdf)
+            from jnius import autoclass, jarray
+            BuildVersion = autoclass("android.os.Build$VERSION")
+            if int(BuildVersion.SDK_INT) >= 29:
+                ContentValues = autoclass("android.content.ContentValues")
+                MediaStoreDownloads = autoclass("android.provider.MediaStore$Downloads")
+                resolver = autoclass("org.kivy.android.PythonActivity").mActivity.getContentResolver()
+                values = ContentValues()
+                values.put("_display_name", filename)
+                values.put("mime_type", "application/pdf")
+                values.put("relative_path", "Download/BizCore Invoices")
+                values.put("is_pending", 1)
+                uri = resolver.insert(MediaStoreDownloads.EXTERNAL_CONTENT_URI, values)
+                if uri is None:
+                    raise IOError("Android Downloads folder mein invoice entry create nahi hui.")
+                output = None
+                try:
+                    output = resolver.openOutputStream(uri, "w")
+                    if output is None:
+                        raise IOError("Downloads mein invoice write stream open nahi hua.")
+                    signed_bytes = jarray("b")([b if b < 128 else b - 256 for b in pdf])
+                    output.write(signed_bytes)
+                    output.flush()
+                except Exception:
+                    resolver.delete(uri, None, None)
+                    raise
+                finally:
+                    if output is not None:
+                        output.close()
+                ready = ContentValues()
+                ready.put("is_pending", 0)
+                resolver.update(uri, ready, None, None)
+                return "Downloads/BizCore Invoices/" + filename
+            Environment = autoclass("android.os.Environment")
+            from android.permissions import Permission, check_permission, request_permissions
+            if not check_permission(Permission.WRITE_EXTERNAL_STORAGE):
+                request_permissions([Permission.WRITE_EXTERNAL_STORAGE])
+                raise PermissionError("Storage permission requested. Sale saved, invoice PDF could not be saved yet.")
+            folder = os.path.join(
+                str(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)),
+                "BizCore Invoices"
+            )
+            os.makedirs(folder, exist_ok=True)
+            path = os.path.join(folder, filename)
+            with open(path, "wb") as output:
+                output.write(pdf)
             return path
-        except OSError:
+        except Exception as exc:
+            print("Invoice PDF generation failed:", repr(exc))
             return None
+
     def on_stop(self):
         if hasattr(self, "store"):
             try: self.store.conn.close()
