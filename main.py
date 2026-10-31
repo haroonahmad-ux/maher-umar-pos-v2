@@ -12,6 +12,8 @@ import json
 import hashlib
 import urllib.request
 import urllib.error
+import ssl
+import certifi
 from datetime import datetime
 
 from kivy.app import App
@@ -115,17 +117,12 @@ KV = r'''
         Widget:
             size_hint_y: 0.16
         PageHeading:
-            text: 'MAHER UMAR POS'
+            text: '[size=13sp]Welcome to[/size]\\n[size=25sp][b]Maher Umar Mobile & Communication[/b][/size]'
+            markup: True
             halign: 'center'
-            height: dp(48)
+            height: dp(66)
             font_size: '25sp'
-        Label:
-            text: 'SECURE RETAILER ACCOUNT'
-            size_hint_y: None
-            height: dp(24)
-            font_size: '11sp'
-            bold: True
-            color: (0.055, 0.42, 0.48, 1)
+            color: (0.07, 0.19, 0.23, 1)
         BoxLayout:
             size_hint_y: None
             height: dp(44)
@@ -162,14 +159,15 @@ KV = r'''
                 text_size: self.size
             Field:
                 id: retailer_name
-                hint_text: 'Customer / Retailer Name'
+                hint_text: 'Retailer Name'
                 opacity: 1 if root.mode == 'signup' else 0
                 height: dp(48) if root.mode == 'signup' else dp(0)
                 disabled: root.mode != 'signup'
             Field:
                 id: email
                 hint_text: 'Email address'
-                input_type: 'text'
+                input_type: 'mail'
+                keyboard_suggestions: False
             Field:
                 id: otp
                 hint_text: 'Enter 6-digit email OTP'
@@ -1830,7 +1828,8 @@ class MaherUmarPOSApp(App):
                      "Content-Type": "application/json"},
             method="POST")
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
+            context = ssl.create_default_context(cafile=certifi.where())
+            with urllib.request.urlopen(request, timeout=30, context=context) as response:
                 result = json.loads(response.read().decode("utf-8"))
                 if not isinstance(result, dict):
                     raise ValueError("Supabase returned an invalid authentication response.")
@@ -1842,8 +1841,10 @@ class MaherUmarPOSApp(App):
             except Exception:
                 detail = "HTTP " + str(exc.code)
             raise ValueError(str(detail))
-        except (urllib.error.URLError, TimeoutError) as exc:
-            raise ValueError("Internet connection check karein. Supabase Auth filhal reachable nahi.") from exc
+        except (urllib.error.URLError, TimeoutError, ssl.SSLError) as exc:
+            reason = getattr(exc, "reason", exc)
+            detail = str(reason).strip() or exc.__class__.__name__
+            raise ValueError("Secure connection to Supabase could not be established: " + detail[:220] + ". Check internet/date-time and try again.") from exc
 
     def supabase_request_otp(self, email, purpose, name=""):
         payload = {"email": email, "create_user": purpose == "signup"}
