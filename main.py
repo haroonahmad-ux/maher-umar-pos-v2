@@ -117,7 +117,7 @@ KV = r'''
         Widget:
             size_hint_y: 0.16
         PageHeading:
-            text: '[size=13sp]Welcome to[/size]\\n[size=25sp][b]Maher Umar Mobile & Communication[/b][/size]'
+            text: '[size=13sp]Welcome to[/size]\n[size=25sp][b]Maher Umar Mobile & Communication[/b][/size]'
             markup: True
             halign: 'center'
             height: dp(66)
