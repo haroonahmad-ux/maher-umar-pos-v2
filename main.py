@@ -4,6 +4,7 @@ Database changes are additive; existing products, sales and expenses are preserv
 import os
 import csv
 import io
+import threading
 import zipfile
 import shutil
 import sqlite3
@@ -232,6 +233,12 @@ KV = r'''
                 text: ('Verify Email OTP & Create Account' if root.mode == 'signup' else 'Verify Email OTP & Login') if root.otp_sent else ('Send Signup OTP' if root.mode == 'signup' else 'Send Login OTP')
                 disabled: root.busy
                 on_release: root.primary_action()
+            SecondaryButton:
+                text: 'Resend OTP'
+                opacity: 1 if root.otp_sent else 0
+                height: dp(42) if root.otp_sent else dp(0)
+                disabled: root.busy or root.cooldown_seconds > 0
+                on_release: root.resend_otp()
             SecondaryButton:
                 text: 'Change email address'
                 opacity: 1 if root.otp_sent else 0
@@ -1182,84 +1189,151 @@ class AuthScreen(Screen):
     otp_sent = BooleanProperty(False)
     status_text = StringProperty("Create an account or sign in using your email address.")
     busy = BooleanProperty(False)
+    cooldown_seconds = NumericProperty(0)
     _pending_email = ""
     _pending_name = ""
     _pending_mode = ""
+    _cooldown_event = None
 
     def set_mode(self, mode):
-        if mode not in ("signup", "login"):
-            return
+        if mode not in ("signup", "login"): return
         self.mode = mode
         self.otp_sent = False
-        self.busy = False
         self.ids.otp.text = ""
+        self.busy = False
         self.status_text = "Enter your name and email to create an account." if mode == "signup" else "Enter your registered email address."
 
     def primary_action(self):
-        if self.busy:
-            return
+        if self.busy: return
         self.verify_otp() if self.otp_sent else self.send_otp()
+
+    def _start_cooldown(self, seconds=60):
+        self.cooldown_seconds = max(0, int(seconds))
+        if self._cooldown_event:
+            self._cooldown_event.cancel()
+            self._cooldown_event = None
+        if self.cooldown_seconds:
+            self._cooldown_event = Clock.schedule_interval(self._tick_cooldown, 1)
+
+    def _tick_cooldown(self, _dt):
+        self.cooldown_seconds = max(0, self.cooldown_seconds - 1)
+        if self.cooldown_seconds <= 0:
+            self._cooldown_event = None
+            self.status_text = "You can request another email code now."
+            return False
+        self.status_text = "Resend available in " + str(self.cooldown_seconds) + " seconds."
+        return True
 
     def send_otp(self):
         email = self.ids.email.text.strip().lower()
         name = self.ids.retailer_name.text.strip() if self.mode == "signup" else ""
-        if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+        if not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", email):
             show_message("Please enter a valid email address.", "Email required")
             return
         if self.mode == "signup" and (len(name) < 2 or len(name) > 60):
             show_message("Retailer name must be 2–60 characters.", "Name required")
             return
+        if self.cooldown_seconds > 0:
+            self.status_text = "Please wait " + str(self.cooldown_seconds) + " seconds before requesting another code."
+            return
         self.busy = True
-        self.status_text = "Requesting secure email verification code…"
-        try:
-            app = App.get_running_app()
-            app.supabase_request_otp(email, self.mode, name)
-            self._pending_email = email
-            self._pending_name = name
-            self._pending_mode = self.mode
-            self.otp_sent = True
-            self.ids.otp.text = ""
-            self.status_text = "If the address is eligible, a 6-digit code has been sent. Check Inbox and Spam."
-        except Exception as exc:
+        self.status_text = "Sending your secure email code…"
+        requested_mode = self.mode
+        def worker():
+            try:
+                App.get_running_app().supabase_request_otp(email, requested_mode, name)
+                Clock.schedule_once(lambda _dt: self._on_otp_request_success(email, name, requested_mode), 0)
+            except Exception as exc:
+                message = str(exc)
+                Clock.schedule_once(lambda _dt, msg=message: self._on_otp_request_error(email, requested_mode, msg), 0)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_otp_request_success(self, email, name, mode):
+        self.busy = False
+        self._pending_email, self._pending_name, self._pending_mode = email, name, mode
+        self.otp_sent = True
+        self.ids.otp.text = ""
+        self._start_cooldown(60)
+        self.status_text = "Email code sent. Check Inbox and Spam. Resend available in 60 seconds."
+
+    def _on_otp_request_error(self, email, mode, message):
+        self.busy = False
+        lowered = message.lower()
+        if mode == "signup" and any(x in lowered for x in ("already registered", "user already", "email_exists", "login_to_existing_account")):
+            self.status_text = "This email already has an account."
+            show_message("Login to Existing Account — this email is already registered. Switch to Login instead of creating another account.", "Existing account")
+            self.set_mode("login")
+            self.ids.email.text = email
+            return
+        if mode == "login" and "no account exists" in lowered:
+            self.status_text = "No account exists for this email. Create an account first."
+        else:
             self.status_text = "Could not send verification email."
-            show_message(str(exc), "Email OTP unavailable")
-        finally:
-            self.busy = False
+        if "security purposes" in lowered or "after" in lowered or "too many" in lowered:
+            self._start_cooldown(60)
+        show_message(message, "Email OTP unavailable")
+
+    def resend_otp(self):
+        if self.busy or self.cooldown_seconds > 0 or not self._pending_email: return
+        self.ids.email.text = self._pending_email
+        self.mode = self._pending_mode
+        self.send_otp()
 
     def verify_otp(self):
         code = self.ids.otp.text.strip()
-        if not re.fullmatch(r"\d{6}", code):
+        if not re.fullmatch(r"\\d{6}", code):
             show_message("Please enter the 6-digit code from your email.", "Invalid OTP")
+            return
+        if not self._pending_email:
+            show_message("Request a new verification code first.", "OTP session missing")
             return
         self.busy = True
         self.status_text = "Verifying your email code…"
+        email, mode, name = self._pending_email, self._pending_mode, self._pending_name
+        def worker():
+            try:
+                session = App.get_running_app().supabase_verify_otp(email, code, mode)
+                Clock.schedule_once(lambda _dt: self._on_otp_verified(email, name, session), 0)
+            except Exception as exc:
+                message = str(exc)
+                Clock.schedule_once(lambda _dt, msg=message: self._on_otp_verify_error(msg), 0)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_otp_verified(self, email, name, session):
         try:
-            app = App.get_running_app()
-            session = app.supabase_verify_otp(self._pending_email, code, self._pending_mode)
             user = session.get("user") or {}
             uid = str(user.get("id") or "")
-            if not uid:
-                raise ValueError("Supabase verified the code but did not return an account ID.")
+            if not uid: raise ValueError("Supabase verified the code but did not return an account ID.")
             metadata = user.get("user_metadata") or {}
-            account_name = str(metadata.get("customer_name") or self._pending_name or self._pending_email.split("@")[0])
-            app.activate_retailer(uid, account_name, self._pending_email, session)
+            account_name = str(metadata.get("customer_name") or name or email.split("@")[0])
+            app = App.get_running_app()
+            app.activate_retailer(uid, account_name, email, session)
+            if self._cooldown_event:
+                self._cooldown_event.cancel()
+                self._cooldown_event = None
+            self.cooldown_seconds = 0
             self.otp_sent = False
             self.ids.otp.text = ""
+            self.busy = False
             self.status_text = "Email verified successfully."
             app.go("home")
             app.refresh_home()
             show_message("Your email is verified and your retailer workspace is ready.", "Welcome")
         except Exception as exc:
-            self.status_text = "Email verification failed. Check the code and try again."
-            show_message(str(exc), "OTP verification failed")
-        finally:
-            self.busy = False
+            self._on_otp_verify_error(str(exc))
+
+    def _on_otp_verify_error(self, message):
+        self.busy = False
+        self.status_text = "Incorrect or expired OTP. Resend available after the countdown."
+        self._start_cooldown(60)
+        show_message(message + "\\nPlease wait 60 seconds before requesting a new code.", "OTP verification failed")
 
     def change_email(self):
         self.otp_sent = False
         self.ids.otp.text = ""
         self._pending_email = ""
         self._pending_name = ""
+        self._pending_mode = ""
         self.status_text = "Enter the correct email address and request a new code."
 
 
