@@ -76,6 +76,19 @@ KV = r'''
     background_color: (0.12, 0.36, 0.88, 1)
     color: (1, 1, 1, 1)
     font_size: '14sp'
+<SignOutIconButton>:
+    canvas.after:
+        Color:
+            rgba: (1, 1, 1, 1)
+        Line:
+            points: [self.center_x - dp(7), self.center_y - dp(10), self.center_x - dp(7), self.center_y + dp(10), self.center_x + dp(1), self.center_y + dp(10), self.center_x + dp(1), self.center_y + dp(5)]
+            width: dp(2)
+        Line:
+            points: [self.center_x - dp(3), self.center_y, self.center_x + dp(10), self.center_y, self.center_x + dp(5), self.center_y + dp(5)]
+            width: dp(2)
+        Line:
+            points: [self.center_x + dp(10), self.center_y, self.center_x + dp(5), self.center_y - dp(5)]
+            width: dp(2)
 <SearchIconButton>:
     background_normal: ''
     background_down: ''
@@ -282,16 +295,12 @@ KV = r'''
                         size_hint: None, None
                         size: dp(42), dp(42)
                         on_release: app.open_quick_search()
-                    Button:
-                        text: '↪'
+                    SignOutIconButton:
                         size_hint: None, None
                         size: dp(42), dp(36)
                         background_normal: ''
                         background_down: ''
                         background_color: (0.78, 0.16, 0.18, 1)
-                        color: (1, 1, 1, 1)
-                        font_size: '20sp'
-                        bold: True
                         on_release: app.sign_out()
                 BoxLayout:
                     orientation: 'vertical'
@@ -475,7 +484,7 @@ KV = r'''
                     Widget:
                 PrimaryButton:
                     id: discount_toggle
-                    text: '＋  Add Product Discount (Optional)'
+                    text: 'Add Product Discount (Optional)'
                     on_release: root.toggle_discount_form()
                 BoxLayout:
                     id: discount_slot
