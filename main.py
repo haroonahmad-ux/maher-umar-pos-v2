@@ -1227,7 +1227,7 @@ class AuthScreen(Screen):
     def send_otp(self):
         email = self.ids.email.text.strip().lower()
         name = self.ids.retailer_name.text.strip() if self.mode == "signup" else ""
-        if not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", email):
+        if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
             show_message("Please enter a valid email address.", "Email required")
             return
         if self.mode == "signup" and (len(name) < 2 or len(name) > 60):
@@ -1281,7 +1281,7 @@ class AuthScreen(Screen):
 
     def verify_otp(self):
         code = self.ids.otp.text.strip()
-        if not re.fullmatch(r"\\d{6}", code):
+        if not re.fullmatch(r"\d{6}", code):
             show_message("Please enter the 6-digit code from your email.", "Invalid OTP")
             return
         if not self._pending_email:
