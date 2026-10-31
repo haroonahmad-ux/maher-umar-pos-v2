@@ -116,13 +116,28 @@ KV = r'''
                 size: self.size
         Widget:
             size_hint_y: 0.16
-        PageHeading:
-            text: '[size=13sp]Welcome to[/size] [size=25sp][b]Maher Umar Mobile & Communication[/b][/size]'
-            markup: True
-            halign: 'center'
+        BoxLayout:
+            orientation: 'vertical'
+            size_hint_y: None
             height: dp(66)
-            font_size: '25sp'
-            color: (0.07, 0.19, 0.23, 1)
+            spacing: dp(0)
+            Label:
+                text: 'Welcome to'
+                size_hint_y: None
+                height: dp(20)
+                font_size: '13sp'
+                color: (0.07, 0.19, 0.23, 1)
+                halign: 'center'
+            Label:
+                text: '[b]Maher Umar Mobile & Communication[/b]'
+                markup: True
+                size_hint_y: None
+                height: dp(42)
+                font_size: '23sp'
+                color: (0.07, 0.19, 0.23, 1)
+                halign: 'center'
+                valign: 'middle'
+                text_size: self.size
         BoxLayout:
             size_hint_y: None
             height: dp(44)
@@ -228,21 +243,42 @@ KV = r'''
                     orientation: 'horizontal'
                     size_hint_y: None
                     height: dp(92)
-                    spacing: dp(12)
+                    spacing: dp(9)
                     Image:
                         source: 'app_icon.png'
                         size_hint: None, None
                         size: dp(76), dp(76)
                         allow_stretch: True
                         keep_ratio: True
-                    Label:
-                        text: '[b]MAHER UMAR MOBILE & COMMUNICATION[/b] [size=13sp]Your store, in control[/size]'
-                        markup: True
-                        font_size: '21sp'
-                        color: (0.07, 0.19, 0.23, 1)
-                        halign: 'left'
-                        valign: 'middle'
-                        text_size: self.size
+                    BoxLayout:
+                        orientation: 'vertical'
+                        spacing: dp(2)
+                        Label:
+                            text: '[b]MAHER UMAR MOBILE & COMMUNICATION[/b]'
+                            markup: True
+                            font_size: '19sp'
+                            color: (0.07, 0.19, 0.23, 1)
+                            halign: 'left'
+                            valign: 'bottom'
+                            text_size: self.size
+                        Label:
+                            text: 'Your store, in control'
+                            font_size: '12sp'
+                            color: (0.20, 0.31, 0.35, 1)
+                            halign: 'left'
+                            valign: 'top'
+                            text_size: self.size
+                    Button:
+                        text: '↪'
+                        size_hint: None, None
+                        size: dp(42), dp(42)
+                        background_normal: ''
+                        background_down: ''
+                        background_color: (0.055, 0.34, 0.42, 1)
+                        color: (1, 1, 1, 1)
+                        font_size: '22sp'
+                        bold: True
+                        on_release: app.sign_out()
                 BoxLayout:
                     orientation: 'vertical'
                     size_hint_y: None
