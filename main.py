@@ -1155,6 +1155,7 @@ class ExpiryDateInput(TextInput):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.bind(text=self._format_date)
+        Clock.schedule_once(lambda _dt: self._format_date(), 0)
     def _format_date(self, *_):
         if self._formatting: return
         digits = "".join(ch for ch in self.text if ch.isdigit())[:4]
@@ -2075,6 +2076,7 @@ class MaherUmarPOSApp(App):
                 self.store = Store(db_path)
                 raise
             self.refresh_home()
+            if candidate != temp_path and os.path.exists(temp_path): os.remove(temp_path)
             show_message("Backup restore ho gaya. Restore se pehle current database ki safety copy bhi banayi gayi.", "Restore complete")
         except Exception as exc:
             try:
