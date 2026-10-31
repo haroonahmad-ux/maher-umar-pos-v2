@@ -18,7 +18,7 @@ version = 2.0.1
 # Custom bright mobile-retail POS app icon
 icon.filename = app_icon.png
 
-requirements = python3,kivy
+requirements = python3,kivy,certifi
 
 # Supabase email OTP uses the HTTPS Auth API; no Firebase SDK is required.
 
