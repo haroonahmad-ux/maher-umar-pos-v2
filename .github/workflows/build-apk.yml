@@ -6,6 +6,7 @@ on:
       - main
       - feat/stock-management-discounts
       - feature/firebase-phone-otp
+      - feature/bizcore-retailer-ui-csv-backup
   pull_request:
     branches:
       - main
