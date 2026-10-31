@@ -269,14 +269,14 @@ KV = r'''
                             valign: 'top'
                             text_size: self.size
                     Button:
-                        text: '↪'
+                        text: '↪  SIGN OUT'
                         size_hint: None, None
-                        size: dp(42), dp(42)
+                        size: dp(104), dp(42)
                         background_normal: ''
                         background_down: ''
-                        background_color: (0.055, 0.34, 0.42, 1)
+                        background_color: (0.10, 0.58, 0.30, 1)
                         color: (1, 1, 1, 1)
-                        font_size: '22sp'
+                        font_size: '12sp'
                         bold: True
                         on_release: app.sign_out()
                 BoxLayout:
