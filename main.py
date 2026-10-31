@@ -545,7 +545,7 @@ KV = r'''
                     orientation: 'vertical'
                     size_hint_y: None
                     height: dp(0)
-                SuccessButton:
+                SecondaryButton:
                     text: 'Save Product'
                     on_release: root.add_product()
                 SuccessButton:
