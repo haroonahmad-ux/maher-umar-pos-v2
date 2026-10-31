@@ -2,6 +2,9 @@
 Database changes are additive; existing products, sales and expenses are preserved.
 """
 import os
+import csv
+import io
+import zipfile
 import shutil
 import sqlite3
 import sys
@@ -22,7 +25,7 @@ from kivy.clock import Clock
 from kivy.lang import Builder
 from kivy.metrics import dp
 from kivy.graphics import Color, RoundedRectangle
-from kivy.properties import StringProperty, BooleanProperty
+from kivy.properties import StringProperty, BooleanProperty, NumericProperty
 from kivy.uix.screenmanager import ScreenManager, Screen
 from kivy.uix.popup import Popup
 from kivy.uix.label import Label
@@ -33,8 +36,8 @@ from kivy.uix.textinput import TextInput
 from kivy.uix.spinner import Spinner
 from kivy.uix.scrollview import ScrollView
 
-APP_TITLE = "Maher Umar POS"
-SHOP_NAME = "MAHER UMAR MOBILE & COMMUNICATION"
+APP_TITLE = "BizCore"
+SHOP_NAME = "BizCore POS & ERP System"
 DB_NAME = "maher_umar_pos.db"
 SUPABASE_URL = "https://dtajbsosaaohyluedcof.supabase.co"
 SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Uv13k1JAjggnYbz7NA6vYg_QLoRLd79"
@@ -70,9 +73,22 @@ KV = r'''
     height: dp(44)
     background_normal: ''
     background_down: ''
-    background_color: (0.88, 0.94, 0.95, 1)
-    color: (0.07, 0.26, 0.31, 1)
+    background_color: (0.12, 0.36, 0.88, 1)
+    color: (1, 1, 1, 1)
     font_size: '14sp'
+<SearchIconButton>:
+    background_normal: ''
+    background_down: ''
+    background_color: (0.12, 0.36, 0.88, 1)
+    canvas.after:
+        Color:
+            rgba: (1, 1, 1, 1)
+        Ellipse:
+            pos: self.center_x - dp(8), self.center_y - dp(5)
+            size: dp(14), dp(14)
+        Line:
+            points: [self.center_x + dp(5), self.center_y - dp(5), self.center_x + dp(11), self.center_y - dp(11)]
+            width: dp(2.5)
 <Field@TextInput>:
     size_hint_y: None
     height: dp(48)
@@ -129,7 +145,7 @@ KV = r'''
                 color: (0.07, 0.19, 0.23, 1)
                 halign: 'center'
             Label:
-                text: '[b]Maher Umar Mobile & Communication[/b]'
+                text: '[b]POS & ERP System[/b]'
                 markup: True
                 size_hint_y: None
                 height: dp(42)
@@ -242,19 +258,13 @@ KV = r'''
                 BoxLayout:
                     orientation: 'horizontal'
                     size_hint_y: None
-                    height: dp(92)
-                    spacing: dp(9)
-                    Image:
-                        source: 'app_icon.png'
-                        size_hint: None, None
-                        size: dp(76), dp(76)
-                        allow_stretch: True
-                        keep_ratio: True
+                    height: dp(76)
+                    spacing: dp(8)
                     BoxLayout:
                         orientation: 'vertical'
-                        spacing: dp(2)
+                        spacing: dp(1)
                         Label:
-                            text: '[b]MAHER UMAR MOBILE & COMMUNICATION[/b]'
+                            text: '[b]Welcome to BizCore[/b]'
                             markup: True
                             font_size: '19sp'
                             color: (0.07, 0.19, 0.23, 1)
@@ -262,21 +272,25 @@ KV = r'''
                             valign: 'bottom'
                             text_size: self.size
                         Label:
-                            text: 'Your store, in control'
-                            font_size: '12sp'
+                            text: root.retailer_name
+                            font_size: '16sp'
                             color: (0.20, 0.31, 0.35, 1)
                             halign: 'left'
                             valign: 'top'
                             text_size: self.size
-                    Button:
-                        text: '⇥  SIGN OUT'
+                    SearchIconButton:
                         size_hint: None, None
-                        size: dp(104), dp(42)
+                        size: dp(42), dp(42)
+                        on_release: app.open_quick_search()
+                    Button:
+                        text: '↪'
+                        size_hint: None, None
+                        size: dp(42), dp(36)
                         background_normal: ''
                         background_down: ''
                         background_color: (0.78, 0.16, 0.18, 1)
                         color: (1, 1, 1, 1)
-                        font_size: '12sp'
+                        font_size: '20sp'
                         bold: True
                         on_release: app.sign_out()
                 BoxLayout:
@@ -471,6 +485,9 @@ KV = r'''
                 PrimaryButton:
                     text: 'Save Product'
                     on_release: root.add_product()
+                SecondaryButton:
+                    text: 'Import CSV File'
+                    on_release: app.import_products_csv()
         SecondaryButton:
             text: 'Back to Dashboard'
             on_release: app.go('home')
@@ -503,8 +520,7 @@ KV = r'''
                 id: stock_search
                 hint_text: 'Search product name or category'
                 on_text: root.set_search(self.text)
-            SecondaryButton:
-                text: '⌕'
+            SearchIconButton:
                 size_hint_x: None
                 width: dp(48)
                 on_release: root.set_search(self.ids.stock_search.text)
@@ -1131,6 +1147,26 @@ class Store:
         return dest_path
 
 
+
+
+class ExpiryDateInput(TextInput):
+    """Format typed DDMM as DD-MM-current-year automatically."""
+    _formatting = False
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.bind(text=self._format_date)
+    def _format_date(self, *_):
+        if self._formatting: return
+        digits = "".join(ch for ch in self.text if ch.isdigit())[:4]
+        if len(digits) < 2: formatted = digits
+        elif len(digits) < 4: formatted = digits[:2] + "-" + digits[2:]
+        else: formatted = digits[:2] + "-" + digits[2:4] + "-" + str(datetime.now().year)
+        if formatted != self.text:
+            self._formatting = True
+            self.text = formatted
+            self.cursor = (len(formatted), 0)
+            self._formatting = False
+
 class AuthScreen(Screen):
     mode = StringProperty("signup")
     otp_sent = BooleanProperty(False)
@@ -1219,7 +1255,11 @@ class AuthScreen(Screen):
 
 class MainScreen(Screen):
     summary_text = StringProperty("")
-    def on_pre_enter(self, *args): self.refresh_summary()
+    retailer_name = StringProperty("Retailer")
+    def on_pre_enter(self, *args):
+        retailer = App.get_running_app().current_retailer or {}
+        self.retailer_name = str(retailer.get("name") or "Retailer")
+        self.refresh_summary()
     def refresh_summary(self):
         t = App.get_running_app().store.totals()
         self.summary_text = (f"Products listed       {t['products']}\nUnits in stock          {t['units']}\nSales recorded         {t['sales']}\nNet sales                 {money(t['revenue'])}\nOutstanding due       {money(t['due'])}\nTotal expenses        {money(t['expenses'])}\nLow-stock products  {t['low']}")
@@ -1277,7 +1317,9 @@ class AddProductScreen(Screen):
             panel.add_widget(field)
 
         make_field("Discount percentage (e.g. 10)", "percent", "float")
-        make_field("Expiry date (DDMM, e.g. 3011)", "expiry", "int")
+        expiry = ExpiryDateInput(hint_text="Expiry date (DD-MM-YYYY)", multiline=False, size_hint_y=None, height=dp(48), font_size="15sp", input_filter="int")
+        self.discount_fields["expiry"] = expiry
+        panel.add_widget(expiry)
         make_field("Minimum qualifying quantity", "quantity", "int")
         note = Label(
             text="Promotion starts automatically today. Only expiry date and qualifying quantity are required.",
@@ -1294,10 +1336,10 @@ class AddProductScreen(Screen):
     @staticmethod
     def _parse_expiry(raw):
         digits = "".join(ch for ch in (raw or "") if ch.isdigit())
-        if len(digits) != 4:
-            raise ValueError("Expiry date mein DDMM format mein 4 digits enter karein, misal: 3011.")
-        day, month = int(digits[:2]), int(digits[2:])
-        year = datetime.now().year
+        if len(digits) not in (4, 8):
+            raise ValueError("Expiry date DD-MM-YYYY format mein enter karein.")
+        day, month = int(digits[:2]), int(digits[2:4])
+        year = int(digits[4:8]) if len(digits) == 8 else datetime.now().year
         try:
             expiry = datetime(year, month, day).date()
         except ValueError:
@@ -1388,10 +1430,14 @@ class StockScreen(Screen):
         body = DialogBody(orientation="vertical", padding=dp(12), spacing=dp(8))
         body.add_widget(Label(text=str(product["name"]), size_hint_y=None, height=dp(30),
                               color=(0.08,0.16,0.18,1), halign="left"))
-        cost = TextInput(text=str(product["purchase_price"]), hint_text="Cost / purchase price (Rs.)",
-                         input_filter="float", multiline=False, size_hint_y=None, height=dp(48))
-        selling = TextInput(text=str(product["sale_price"]), hint_text="Selling price (Rs.)",
-                            input_filter="float", multiline=False, size_hint_y=None, height=dp(48))
+        cost = TextInput(text=str(product["purchase_price"]), hint_text="Cost Price (Rs.)",
+                         input_filter="float", multiline=False, size_hint_y=None, height=dp(54),
+                         background_normal="", background_active="", background_color=(0.94,0.97,0.99,1),
+                         padding=[dp(12),dp(14),dp(12),dp(10)], font_size="16sp")
+        selling = TextInput(text=str(product["sale_price"]), hint_text="Selling Price (Rs.)",
+                            input_filter="float", multiline=False, size_hint_y=None, height=dp(54),
+                            background_normal="", background_active="", background_color=(0.94,0.97,0.99,1),
+                            padding=[dp(12),dp(14),dp(12),dp(10)], font_size="16sp")
         body.add_widget(cost); body.add_widget(selling)
         body.add_widget(Label(text="Only future sales use these prices. Past sale records remain unchanged.",
                               size_hint_y=None, height=dp(42), color=(0.35,0.43,0.46,1), font_size="12sp"))
@@ -1432,7 +1478,7 @@ class StockScreen(Screen):
         expiry = TextInput(
             text=datetime.strptime(product["discount_end_date"], "%Y-%m-%d").strftime("%d%m")
                  if active and product["discount_end_date"] else "",
-            hint_text="Expiry date (DDMM, e.g. 3011)",
+            hint_text="Expiry date (DD-MM-YYYY)",
             input_filter="int", multiline=False, size_hint_y=None, height=dp(46)
         )
         quantity = TextInput(
@@ -1462,12 +1508,13 @@ class StockScreen(Screen):
                 if pct <= 0 or pct >= 100:
                     raise ValueError("Discount percentage 0 se zyada aur 100 se kam enter karein.")
                 digits = "".join(ch for ch in expiry.text if ch.isdigit())
-                if len(digits) != 4:
-                    raise ValueError("Expiry date DDMM format mein 4 digits enter karein, misal: 3011.")
-                day, month = int(digits[:2]), int(digits[2:])
+                if len(digits) not in (4, 8):
+                    raise ValueError("Expiry date DD-MM-YYYY format mein enter karein.")
+                day, month = int(digits[:2]), int(digits[2:4])
                 today = datetime.now().date()
+                year = int(digits[4:8]) if len(digits) == 8 else today.year
                 try:
-                    end = datetime(today.year, month, day).date()
+                    end = datetime(year, month, day).date()
                 except ValueError:
                     raise ValueError("Expiry date valid nahi. DDMM dobara check karein.")
                 if end < today:
@@ -1934,7 +1981,7 @@ class MaherUmarPOSApp(App):
             intent = Intent(Intent.ACTION_CREATE_DOCUMENT)
             intent.addCategory(Intent.CATEGORY_OPENABLE)
             intent.setType("application/octet-stream")
-            intent.putExtra(Intent.EXTRA_TITLE, "maher_umar_backup_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".db")
+            intent.putExtra(Intent.EXTRA_TITLE, "BizCore_Backup_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".bizcore")
             activity.bind(on_activity_result=self._on_export_backup_result)
             autoclass("org.kivy.android.PythonActivity").mActivity.startActivityForResult(intent, 7411)
         except Exception as exc:
@@ -1948,7 +1995,7 @@ class MaherUmarPOSApp(App):
             activity.unbind(on_activity_result=self._on_export_backup_result)
             if result_code != -1 or intent is None:
                 show_message("Backup export cancel kar diya gaya.", "Export cancelled"); return
-            backup_path = self.store.backup()
+            backup_path = self.create_portable_backup()
             resolver = autoclass("org.kivy.android.PythonActivity").mActivity.getContentResolver()
             output = resolver.openOutputStream(intent.getData())
             if output is None: raise IOError("Selected destination open nahi ho saki.")
@@ -1997,18 +2044,30 @@ class MaherUmarPOSApp(App):
                         if count <= 0: break
                         target.write(bytes((int(buf[i]) & 255) for i in range(count)))
             finally: stream.close()
-            check = sqlite3.connect(temp_path)
+            candidate = temp_path
+            extracted_path = temp_path + ".sqlite"
+            if zipfile.is_zipfile(temp_path):
+                with zipfile.ZipFile(temp_path,"r") as archive:
+                    if not {"manifest.json","database.sqlite3"}.issubset(set(archive.namelist())): raise ValueError("BizCore backup archive incomplete hai.")
+                    manifest=json.loads(archive.read("manifest.json").decode("utf-8"))
+                    if manifest.get("format")!="bizcore-backup-v1": raise ValueError("Backup format supported nahi hai.")
+                    payload=archive.read("database.sqlite3")
+                    if hashlib.sha256(payload).hexdigest()!=manifest.get("sha256"): raise ValueError("Backup checksum mismatch: file damaged ho sakti hai.")
+                    backup_uid=str(manifest.get("retailer_uid") or ""); current_uid=str((self.current_retailer or {}).get("uid") or "")
+                    if backup_uid and current_uid and backup_uid!=current_uid: raise ValueError("Yeh backup kisi doosray retailer account ka hai. Correct email se login karein.")
+                    with open(extracted_path,"wb") as restored: restored.write(payload)
+                    candidate=extracted_path
+            check = sqlite3.connect(candidate)
             try:
                 integrity = check.execute("PRAGMA integrity_check").fetchone()[0]
                 tables = {r[0] for r in check.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-                if integrity != "ok" or not {"products","sales","sale_items","expenses"}.issubset(tables):
-                    raise ValueError("Yeh valid POS backup nahi hai. Existing data unchanged hai.")
+                if integrity != "ok" or not {"products","sales","sale_items","expenses"}.issubset(tables): raise ValueError("Yeh valid BizCore backup nahi hai. Existing data unchanged hai.")
             finally: check.close()
             safety_copy = self.store.backup()
             db_path = self.store.db_path
             self.store.conn.close()
             try:
-                os.replace(temp_path, db_path)
+                os.replace(candidate, db_path)
                 self.store = Store(db_path)
             except Exception:
                 if os.path.exists(safety_copy): shutil.copy2(safety_copy, db_path)
@@ -2019,8 +2078,110 @@ class MaherUmarPOSApp(App):
         except Exception as exc:
             try:
                 if os.path.exists(temp_path): os.remove(temp_path)
+                if os.path.exists(temp_path + ".sqlite"): os.remove(temp_path + ".sqlite")
             except OSError: pass
             show_message("Restore failed: " + str(exc) + "\\nExisting database ko preserve kiya gaya.", "Restore error")
+
+    def create_portable_backup(self):
+        raw_path = self.store.backup()
+        archive_path = os.path.join(self.user_data_dir, "BizCore_Backup_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".bizcore")
+        with open(raw_path, "rb") as source: payload = source.read()
+        manifest = {"format":"bizcore-backup-v1","app":"BizCore","retailer_uid":str((self.current_retailer or {}).get("uid") or ""),"retailer_email":str((self.current_retailer or {}).get("email") or ""),"created_at":datetime.now().isoformat(timespec="seconds"),"sha256":hashlib.sha256(payload).hexdigest()}
+        with zipfile.ZipFile(archive_path,"w",compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("manifest.json",json.dumps(manifest,indent=2))
+            archive.writestr("database.sqlite3",payload)
+        try: os.remove(raw_path)
+        except OSError: pass
+        return archive_path
+
+    def open_quick_search(self):
+        products=list(self.store.products(order="name"))
+        body=BoxLayout(orientation="vertical",padding=dp(12),spacing=dp(8))
+        query=TextInput(hint_text="Search products by name or category",multiline=False,size_hint_y=None,height=dp(48),font_size="15sp")
+        body.add_widget(query)
+        scroller=ScrollView(do_scroll_x=False)
+        results=BoxLayout(orientation="vertical",size_hint_y=None,spacing=dp(7))
+        results.bind(minimum_height=results.setter("height"))
+        scroller.add_widget(results); body.add_widget(scroller)
+        popup=Popup(title="Search Products",content=body,size_hint=(0.94,0.82),background_color=(1,1,1,1),title_color=(0.08,0.16,0.18,1),separator_color=(0.12,0.36,0.88,1),title_size="18sp")
+        def render(*_):
+            results.clear_widgets()
+            needle=query.text.strip().casefold()
+            matches=[p for p in products if not needle or needle in str(p["name"]).casefold() or needle in str(p["category"]).casefold()]
+            for p in matches[:100]:
+                disc=float(p["discount_percent"] or 0)
+                extra=(f"\nDiscount: {disc:g}% · Expires: {p['discount_end_date']}") if disc else ""
+                label=Label(text=f"[b]{p['name']}[/b]\nCategory: {p['category']}\nCost: {money(p['purchase_price'])} · Selling: {money(p['sale_price'])}\nStock: {p['stock']}{extra}",markup=True,size_hint_y=None,height=dp(92 if disc else 76),color=(0.1,0.2,0.23,1),font_size="12sp",halign="left",valign="middle")
+                label.bind(size=lambda w,*_:setattr(w,"text_size",(w.width,None)))
+                results.add_widget(label)
+            if not matches: results.add_widget(Label(text="No matching products found.",size_hint_y=None,height=dp(42),color=(0.35,0.43,0.46,1)))
+        query.bind(text=render); render(); popup.open()
+
+    def import_products_csv(self):
+        try:
+            from android import activity
+            from jnius import autoclass
+            Intent=autoclass("android.content.Intent")
+            intent=Intent(Intent.ACTION_OPEN_DOCUMENT); intent.addCategory(Intent.CATEGORY_OPENABLE); intent.setType("text/*")
+            activity.bind(on_activity_result=self._on_import_csv_result)
+            autoclass("org.kivy.android.PythonActivity").mActivity.startActivityForResult(intent,7413)
+        except Exception as exc: show_message("CSV picker open nahi ho saka: "+str(exc),"CSV import unavailable")
+
+    def _on_import_csv_result(self, request_code, result_code, intent):
+        if request_code!=7413: return
+        try:
+            from android import activity
+            from jnius import autoclass, jarray
+            activity.unbind(on_activity_result=self._on_import_csv_result)
+            if result_code!=-1 or intent is None:
+                show_message("CSV import cancelled. Existing products unchanged.","Import cancelled"); return
+            resolver=autoclass("org.kivy.android.PythonActivity").mActivity.getContentResolver()
+            stream=resolver.openInputStream(intent.getData())
+            if stream is None: raise IOError("CSV file read nahi ho saki.")
+            data=bytearray(); buf=jarray("b")([0]*65536)
+            try:
+                while True:
+                    count=stream.read(buf)
+                    if count<=0: break
+                    data.extend((int(buf[i]) & 255) for i in range(count))
+            finally: stream.close()
+            reader=csv.DictReader(io.StringIO(bytes(data).decode("utf-8-sig")))
+            if not reader.fieldnames: raise ValueError("CSV header row missing hai.")
+            aliases={"name":("product_name","name","product"),"category":("category","product_category"),"cost":("cost_price","purchase_price","cost","buy_price"),"selling":("selling_price","sale_price","selling","sell_price"),"qty":("quantity","stock","opening_quantity","qty"),"discount":("discount_percent","discount","discount_percentage"),"expiry":("discount_expiry","expiry_date","expire_date"),"minqty":("minimum_quantity","discount_min_qty","min_quantity")}
+            parsed=[]
+            for line,row in enumerate(reader,start=2):
+                values={str(k or "").strip().lower().replace(" ","_"):(v or "").strip() for k,v in row.items()}
+                def get(field,default=""): return next((values[k] for k in aliases[field] if k in values),default)
+                name=correct_product_spelling(get("name"))
+                if not name: raise ValueError(f"CSV row {line}: Product Name missing.")
+                category=detect_category(name,get("category"))
+                cost=float(get("cost","0") or 0); selling=float(get("selling","0") or 0); qty=int(float(get("qty","0") or 0)); pct=float(get("discount","0") or 0)
+                if cost<0 or selling<0 or qty<0 or pct<0 or pct>=100: raise ValueError(f"CSV row {line}: price, quantity ya discount invalid.")
+                start=end=""; minqty=0
+                if pct:
+                    digits="".join(ch for ch in get("expiry") if ch.isdigit())
+                    if len(digits) not in (4,8): raise ValueError(f"CSV row {line}: discount expiry DD-MM-YYYY ya DDMM format mein dein.")
+                    day,month=int(digits[:2]),int(digits[2:4]); year=int(digits[4:8]) if len(digits)==8 else datetime.now().year
+                    end_date=datetime(year,month,day).date()
+                    if end_date<datetime.now().date(): raise ValueError(f"CSV row {line}: discount expiry past date hai.")
+                    start=datetime.now().strftime("%Y-%m-%d"); end=end_date.strftime("%Y-%m-%d"); minqty=int(float(get("minqty","0") or 0))
+                    if minqty<=0: raise ValueError(f"CSV row {line}: discounted product ke liye minimum quantity lazmi hai.")
+                parsed.append((name,category,cost,selling,qty,pct,start,end,minqty))
+            if not parsed: raise ValueError("CSV file mein products nahi hain.")
+            seen=set()
+            for row in parsed:
+                key=row[0].casefold()
+                if key in seen or self.store.conn.execute("SELECT 1 FROM products WHERE LOWER(name)=LOWER(?)",(row[0],)).fetchone():
+                    raise ValueError(f"Duplicate product: {row[0]}. CSV cancelled; no rows added.")
+                seen.add(key)
+            with self.store.conn:
+                for row in parsed:
+                    self.store.conn.execute("INSERT INTO products(name,category,purchase_price,sale_price,stock,created_at,discount_percent,discount_start_date,discount_end_date,discount_min_qty) VALUES(?,?,?,?,?,?,?,?,?,?)",(row[0],row[1],row[2],row[3],row[4],datetime.now().isoformat(timespec="seconds"),row[5],row[6],row[7],row[8]))
+            self.refresh_home()
+            self.root.get_screen("stock").refresh()
+            show_message(f"{len(parsed)} products added successfully to Stock Management.","Products Added Successfully")
+        except Exception as exc:
+            show_message("CSV import failed: "+str(exc)+"\nNo partial import was kept.","CSV import error")
 
     def generate_invoice(self, sale_id, customer, phone, items, subtotal, discount, net, paid, due, change=0):
         """Write a lightweight one-page PDF using built-in PDF syntax (no extra package)."""
