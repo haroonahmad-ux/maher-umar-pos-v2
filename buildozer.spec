@@ -13,7 +13,7 @@ source.dir = .app-source
 
 source.include_exts = py,kv,png,jpg,jpeg,atlas,json,ttf,otf
 
-version = 2.0.2
+version = 2.0.3
 
 # Custom bright mobile-retail POS app icon
 icon.filename = app_icon.png
