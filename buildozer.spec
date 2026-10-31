@@ -13,9 +13,14 @@ source.dir = .app-source
 
 source.include_exts = py,kv,png,jpg,jpeg,atlas,json,ttf,otf
 
-version = 2.0.0
+version = 2.0.3
 
-requirements = python3,kivy
+# Custom bright mobile-retail POS app icon
+icon.filename = app_icon.png
+
+requirements = python3,kivy,certifi
+
+# Supabase email OTP uses the HTTPS Auth API; no Firebase SDK is required.
 
 orientation = portrait
 

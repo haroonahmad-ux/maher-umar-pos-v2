@@ -6,14 +6,23 @@ import shutil
 import sqlite3
 import sys
 import traceback
+import difflib
+import re
+import json
+import hashlib
+import urllib.request
+import urllib.error
+import ssl
+import certifi
 from datetime import datetime
 
 from kivy.app import App
 from kivy.core.window import Window
+from kivy.clock import Clock
 from kivy.lang import Builder
 from kivy.metrics import dp
 from kivy.graphics import Color, RoundedRectangle
-from kivy.properties import StringProperty
+from kivy.properties import StringProperty, BooleanProperty
 from kivy.uix.screenmanager import ScreenManager, Screen
 from kivy.uix.popup import Popup
 from kivy.uix.label import Label
@@ -27,6 +36,8 @@ from kivy.uix.scrollview import ScrollView
 APP_TITLE = "Maher Umar POS"
 SHOP_NAME = "MAHER UMAR MOBILE & COMMUNICATION"
 DB_NAME = "maher_umar_pos.db"
+SUPABASE_URL = "https://dtajbsosaaohyluedcof.supabase.co"
+SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Uv13k1JAjggnYbz7NA6vYg_QLoRLd79"
 LOW_STOCK_THRESHOLD = 5
 
 # Android safe-area defaults: keep status/navigation bars visible.
@@ -92,6 +103,124 @@ KV = r'''
     valign: 'middle'
     text_size: self.size
 
+<AuthScreen>:
+    BoxLayout:
+        orientation: 'vertical'
+        padding: [dp(22), dp(28), dp(22), dp(22)]
+        spacing: dp(10)
+        canvas.before:
+            Color:
+                rgba: (0.94, 0.965, 0.973, 1)
+            Rectangle:
+                pos: self.pos
+                size: self.size
+        Widget:
+            size_hint_y: 0.16
+        BoxLayout:
+            orientation: 'vertical'
+            size_hint_y: None
+            height: dp(66)
+            spacing: dp(0)
+            Label:
+                text: 'Welcome to'
+                size_hint_y: None
+                height: dp(20)
+                font_size: '13sp'
+                color: (0.07, 0.19, 0.23, 1)
+                halign: 'center'
+            Label:
+                text: '[b]Maher Umar Mobile & Communication[/b]'
+                markup: True
+                size_hint_y: None
+                height: dp(42)
+                font_size: '23sp'
+                color: (0.07, 0.19, 0.23, 1)
+                halign: 'center'
+                valign: 'middle'
+                text_size: self.size
+        BoxLayout:
+            size_hint_y: None
+            height: dp(44)
+            spacing: dp(8)
+            SecondaryButton:
+                text: 'Create Account'
+                disabled: root.mode == 'signup'
+                on_release: root.set_mode('signup')
+            SecondaryButton:
+                text: 'Login'
+                disabled: root.mode == 'login'
+                on_release: root.set_mode('login')
+        BoxLayout:
+            orientation: 'vertical'
+            size_hint_y: None
+            height: self.minimum_height
+            padding: [dp(18), dp(18), dp(18), dp(18)]
+            spacing: dp(10)
+            canvas.before:
+                Color:
+                    rgba: (1, 1, 1, 1)
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [dp(16)]
+            Label:
+                text: 'Create your retailer account' if root.mode == 'signup' else 'Welcome back'
+                size_hint_y: None
+                height: dp(32)
+                font_size: '18sp'
+                bold: True
+                color: (0.07, 0.19, 0.23, 1)
+                halign: 'left'
+                text_size: self.size
+            Field:
+                id: retailer_name
+                hint_text: 'Retailer Name'
+                opacity: 1 if root.mode == 'signup' else 0
+                height: dp(48) if root.mode == 'signup' else dp(0)
+                disabled: root.mode != 'signup'
+            Field:
+                id: email
+                hint_text: 'Email address'
+                input_type: 'mail'
+                keyboard_suggestions: False
+            Field:
+                id: otp
+                hint_text: 'Enter 6-digit email OTP'
+                input_filter: 'int'
+                opacity: 1 if root.otp_sent else 0
+                height: dp(48) if root.otp_sent else dp(0)
+                disabled: not root.otp_sent
+            Label:
+                text: root.status_text
+                size_hint_y: None
+                height: dp(42)
+                font_size: '12sp'
+                color: (0.055, 0.42, 0.48, 1)
+                halign: 'left'
+                valign: 'middle'
+                text_size: self.width, None
+            PrimaryButton:
+                text: ('Verify Email OTP & Create Account' if root.mode == 'signup' else 'Verify Email OTP & Login') if root.otp_sent else ('Send Signup OTP' if root.mode == 'signup' else 'Send Login OTP')
+                disabled: root.busy
+                on_release: root.primary_action()
+            SecondaryButton:
+                text: 'Change email address'
+                opacity: 1 if root.otp_sent else 0
+                height: dp(44) if root.otp_sent else dp(0)
+                disabled: root.busy
+                on_release: root.change_email()
+        Label:
+            text: 'A 6-digit verification code will be sent to your email address.'
+            size_hint_y: None
+            height: dp(34)
+            font_size: '10sp'
+            color: (0.43, 0.51, 0.54, 1)
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.width, None
+        Widget:
+            size_hint_y: 0.16
+
 <MainScreen>:
     BoxLayout:
         orientation: 'vertical'
@@ -110,16 +239,46 @@ KV = r'''
                 size_hint_y: None
                 height: self.minimum_height
                 spacing: dp(10)
-                Label:
-                    text: '[b]MAHER UMAR MOBILE & COMMUNICATION[/b]\n[size=13sp]Your store, in control[/size]'
-                    markup: True
+                BoxLayout:
+                    orientation: 'horizontal'
                     size_hint_y: None
                     height: dp(92)
-                    font_size: '21sp'
-                    color: (0.07, 0.19, 0.23, 1)
-                    halign: 'left'
-                    valign: 'middle'
-                    text_size: self.size
+                    spacing: dp(9)
+                    Image:
+                        source: 'app_icon.png'
+                        size_hint: None, None
+                        size: dp(76), dp(76)
+                        allow_stretch: True
+                        keep_ratio: True
+                    BoxLayout:
+                        orientation: 'vertical'
+                        spacing: dp(2)
+                        Label:
+                            text: '[b]MAHER UMAR MOBILE & COMMUNICATION[/b]'
+                            markup: True
+                            font_size: '19sp'
+                            color: (0.07, 0.19, 0.23, 1)
+                            halign: 'left'
+                            valign: 'bottom'
+                            text_size: self.size
+                        Label:
+                            text: 'Your store, in control'
+                            font_size: '12sp'
+                            color: (0.20, 0.31, 0.35, 1)
+                            halign: 'left'
+                            valign: 'top'
+                            text_size: self.size
+                    Button:
+                        text: '⇥  SIGN OUT'
+                        size_hint: None, None
+                        size: dp(104), dp(42)
+                        background_normal: ''
+                        background_down: ''
+                        background_color: (0.78, 0.16, 0.18, 1)
+                        color: (1, 1, 1, 1)
+                        font_size: '12sp'
+                        bold: True
+                        on_release: app.sign_out()
                 BoxLayout:
                     orientation: 'vertical'
                     size_hint_y: None
@@ -151,10 +310,13 @@ KV = r'''
                     cols: 2
                     spacing: dp(8)
                     size_hint_y: None
-                    height: dp(204)
+                    height: self.minimum_height
                     PrimaryButton:
-                        text: 'Products & Stock'
-                        on_release: app.go('products')
+                        text: 'Add Products'
+                        on_release: app.go('add_products')
+                    PrimaryButton:
+                        text: 'Stock Management'
+                        on_release: app.go('stock')
                     PrimaryButton:
                         text: 'New Sale'
                         on_release: app.go('sale')
@@ -171,11 +333,11 @@ KV = r'''
                         text: 'Udhaar Book'
                         on_release: app.go('udhaar')
                     SecondaryButton:
-                        text: 'Database Backup'
-                        on_release: app.backup_database()
+                        text: 'Export Backup'
+                        on_release: app.export_database_backup()
                     SecondaryButton:
-                        text: 'Refresh Dashboard'
-                        on_release: root.refresh_summary()
+                        text: 'Import / Restore Backup'
+                        on_release: app.import_database_backup()
                 Label:
                     text: '[b]BUSINESS SNAPSHOT[/b]'
                     markup: True
@@ -214,8 +376,8 @@ KV = r'''
 <ProductsScreen>:
     BoxLayout:
         orientation: 'vertical'
-        padding: [dp(13), dp(48), dp(13), dp(104)]
-        spacing: dp(8)
+        padding: [dp(16), dp(48), dp(16), dp(104)]
+        spacing: dp(12)
         canvas.before:
             Color:
                 rgba: (0.955, 0.972, 0.978, 1)
@@ -232,7 +394,40 @@ KV = r'''
             PageHeading:
                 text: 'Products & Inventory'
         HintText:
-            text: 'Add products, update stock and view stock alerts.'
+            text: 'Add new products or manage saved inventory separately.'
+        PrimaryButton:
+            text: '＋  Add Products'
+            on_release: app.go('add_products')
+        PrimaryButton:
+            text: '▦  Stock Management'
+            on_release: app.go('stock')
+        Widget:
+        SecondaryButton:
+            text: 'Back to Dashboard'
+            on_release: app.go('home')
+
+<AddProductScreen>:
+    BoxLayout:
+        orientation: 'vertical'
+        padding: [dp(13), dp(48), dp(13), dp(104)]
+        spacing: dp(8)
+        canvas.before:
+            Color:
+                rgba: (0.955, 0.972, 0.978, 1)
+            Rectangle:
+                pos: self.pos
+                size: self.size
+        BoxLayout:
+            size_hint_y: None
+            height: dp(46)
+            spacing: dp(9)
+            BackArrowButton:
+                text: '‹'
+                on_release: app.go('home')
+            PageHeading:
+                text: 'Add Products'
+        HintText:
+            text: 'Enter product details. Product discount is optional.'
         ScrollView:
             do_scroll_x: False
             BoxLayout:
@@ -253,38 +448,105 @@ KV = r'''
                     height: dp(104)
                     Field:
                         id: purchase
-                        hint_text: 'Purchase price (Rs.)'
+                        hint_text: 'Cost price (Rs.)'
                         input_filter: 'float'
                     Field:
                         id: saleprice
-                        hint_text: 'Sale price (Rs.)'
+                        hint_text: 'Selling price (Rs.)'
                         input_filter: 'float'
                     Field:
                         id: stock
-                        hint_text: 'Opening/add stock'
+                        hint_text: 'Opening quantity'
                         input_filter: 'int'
-                    PrimaryButton:
-                        text: 'Add / Update Stock'
-                        on_release: root.add_product()
-                Label:
-                    text: '[b]SAVED PRODUCTS & STOCK ALERTS[/b]'
-                    markup: True
+                    Widget:
+                PrimaryButton:
+                    id: discount_toggle
+                    text: '＋  Add Product Discount (Optional)'
+                    on_release: root.toggle_discount_form()
+                BoxLayout:
+                    id: discount_slot
+                    orientation: 'vertical'
                     size_hint_y: None
-                    height: dp(28)
-                    font_size: '14sp'
-                    color: (0.12, 0.25, 0.29, 1)
-                    halign: 'left'
-                    text_size: self.size
-                Label:
-                    id: listing
-                    text: root.listing_text
-                    size_hint_y: None
-                    height: max(dp(120), self.texture_size[1] + dp(24))
-                    text_size: self.width, None
-                    halign: 'left'
-                    valign: 'top'
-                    color: (0.14, 0.22, 0.25, 1)
-                    font_size: '13sp'
+                    height: dp(0)
+                PrimaryButton:
+                    text: 'Save Product'
+                    on_release: root.add_product()
+        SecondaryButton:
+            text: 'Back to Dashboard'
+            on_release: app.go('home')
+
+<StockScreen>:
+    BoxLayout:
+        orientation: 'vertical'
+        padding: [dp(13), dp(48), dp(13), dp(104)]
+        spacing: dp(8)
+        canvas.before:
+            Color:
+                rgba: (0.955, 0.972, 0.978, 1)
+            Rectangle:
+                pos: self.pos
+                size: self.size
+        BoxLayout:
+            size_hint_y: None
+            height: dp(46)
+            spacing: dp(9)
+            BackArrowButton:
+                text: '‹'
+                on_release: app.go('home')
+            PageHeading:
+                text: 'Stock Management'
+        BoxLayout:
+            size_hint_y: None
+            height: dp(46)
+            spacing: dp(7)
+            Field:
+                id: stock_search
+                hint_text: 'Search product name or category'
+                on_text: root.set_search(self.text)
+            SecondaryButton:
+                text: '⌕'
+                size_hint_x: None
+                width: dp(48)
+                on_release: root.set_search(self.ids.stock_search.text)
+            SecondaryButton:
+                text: '☰'
+                size_hint_x: None
+                width: dp(48)
+                on_release: root.open_filters()
+        Label:
+            text: root.filter_summary
+            size_hint_y: None
+            height: dp(24)
+            color: (0.39, 0.47, 0.50, 1)
+            font_size: '12sp'
+            halign: 'left'
+            text_size: self.size
+        GridLayout:
+            cols: 2
+            spacing: dp(7)
+            size_hint_y: None
+            height: dp(100)
+            Field:
+                id: stock_product_name
+                hint_text: 'Exact saved product name'
+            Field:
+                id: stock_add_qty
+                hint_text: 'Quantity to add'
+                input_filter: 'int'
+            PrimaryButton:
+                text: 'Add Stock'
+                on_release: root.add_stock()
+            SecondaryButton:
+                text: 'Refresh'
+                on_release: root.refresh()
+        ScrollView:
+            do_scroll_x: False
+            BoxLayout:
+                id: stock_rows
+                orientation: 'vertical'
+                size_hint_y: None
+                height: self.minimum_height
+                spacing: dp(8)
         SecondaryButton:
             text: 'Back to Dashboard'
             on_release: app.go('home')
@@ -319,14 +581,11 @@ KV = r'''
                 height: self.minimum_height
                 spacing: dp(8)
                 Field:
-                    id: customer
-                    hint_text: 'Customer name (optional)'
-                Field:
                     id: phone
-                    hint_text: 'Customer phone (optional)'
+                    hint_text: 'Customer mobile number (optional)'
                 Field:
                     id: product_name
-                    hint_text: 'Product name (no product ID needed)'
+                    hint_text: 'Product name'
                 Field:
                     id: quantity
                     hint_text: 'Quantity'
@@ -344,31 +603,8 @@ KV = r'''
                     valign: 'top'
                     color: (0.12, 0.22, 0.25, 1)
                     font_size: '13sp'
-                Label:
-                    text: 'Discount'
-                    size_hint_y: None
-                    height: dp(24)
-                    halign: 'left'
-                    color: (0.12, 0.22, 0.25, 1)
-                    text_size: self.size
-                GridLayout:
-                    cols: 2
-                    spacing: dp(7)
-                    size_hint_y: None
-                    height: dp(48)
-                    Spinner:
-                        id: discount_mode
-                        text: 'Off'
-                        values: ['Off', 'Percentage', 'Fixed amount']
-                        background_normal: ''
-                        background_color: (0.88, 0.94, 0.95, 1)
-                        color: (0.07, 0.26, 0.31, 1)
-                        on_text: root.update_cart()
-                    Field:
-                        id: discount_value
-                        hint_text: 'Discount value'
-                        input_filter: 'float'
-                        on_text: root.update_cart()
+                HintText:
+                    text: 'Product discounts apply automatically when the quantity and date rules are met.'
                 Label:
                     id: total_label
                     text: root.total_text
@@ -590,6 +826,42 @@ def detect_category(name, category=""):
         return "ACCESSORIES"
     return "GENERAL"
 
+# Conservative offline vocabulary for common mobile-retail product terms.
+# Unknown words and model identifiers containing digits are never auto-rewritten.
+MOBILE_PRODUCT_DICTIONARY = set("""
+mobile phone smartphone charger charging cable data usb adapter adaptor
+earbud earbuds airpod airpods handsfree headset headphone headphones neckband
+speaker bluetooth smartwatch watch power bank powerbank battery screen protector
+tempered glass cover case backcover pouch holder stand tripod selfie stick
+memory card sdcard sim card simcard tablet ipad laptop keyboard mouse stylus
+wireless fast original premium refurbished display touch panel camera lens
+vivo oppo samsung iphone xiaomi redmi realme infinix tecno itel nokia oneplus
+motorola google pixel huawei honor nothing apple type c micro usb lightning
+black white blue green red gold silver pink purple transparent clear
+""".split())
+
+def correct_product_spelling(name):
+    """Correct close misspellings of known retail words without internet access."""
+    if not name:
+        return name
+    def fix(match):
+        token = match.group(0)
+        if any(char.isdigit() for char in token) or len(token) < 4:
+            return token
+        lower = token.casefold()
+        if lower in MOBILE_PRODUCT_DICTIONARY:
+            return token
+        candidates = difflib.get_close_matches(lower, MOBILE_PRODUCT_DICTIONARY, n=1, cutoff=0.80)
+        if not candidates:
+            return token
+        corrected = candidates[0]
+        if token.isupper():
+            return corrected.upper()
+        if token.istitle():
+            return corrected.title()
+        return corrected
+    return re.sub(r"[A-Za-z]+", fix, name)
+
 
 class DialogBody(BoxLayout):
     """Light, high-contrast surface for Android confirmation dialogs."""
@@ -606,42 +878,40 @@ class DialogBody(BoxLayout):
 
 
 def show_message(message, title="Maher Umar POS"):
-    """High-contrast confirmation dialog with height adapted to the message."""
-    body = DialogBody(orientation="vertical", padding=[dp(18), dp(14), dp(18), dp(14)], spacing=dp(12))
+    """White, scroll-safe confirmation dialog with a permanently visible OK button."""
+    body = DialogBody(orientation="vertical", padding=[dp(16), dp(14), dp(16), dp(14)], spacing=dp(10))
+    scroll = ScrollView(do_scroll_x=False, do_scroll_y=True, bar_width=dp(3))
     label = Label(
         text=str(message or ""), color=(0.04, 0.10, 0.12, 1),
-        halign="left", valign="top", font_size="15sp", bold=False,
-        size_hint_y=None,
+        halign="left", valign="top", font_size="15sp", size_hint_y=None
     )
-    body.add_widget(label)
 
     def fit_label(*_):
-        label.text_size = (max(dp(160), body.width - dp(36)), None)
+        label.text_size = (max(dp(160), scroll.width - dp(8)), None)
         label.texture_update()
-        label.height = max(dp(78), label.texture_size[1] + dp(18))
+        label.height = max(dp(58), label.texture_size[1] + dp(14))
 
-    body.bind(width=fit_label)
+    scroll.bind(width=fit_label)
+    label.bind(texture_size=lambda *_: setattr(label, "height", max(dp(58), label.texture_size[1] + dp(14))))
+    scroll.add_widget(label)
+    body.add_widget(scroll)
     close = Button(
         text="OK", size_hint_y=None, height=dp(48), background_normal="",
         background_down="", background_color=(0.04, 0.36, 0.44, 1),
-        color=(1, 1, 1, 1), font_size="16sp", bold=True,
+        color=(1, 1, 1, 1), font_size="16sp", bold=True
     )
     body.add_widget(close)
+    dialog_height = min(max(dp(270), Window.height * 0.38), Window.height * 0.60)
     dialog = Popup(
-        title=str(title), content=body, size_hint=(0.92, None), height=dp(230),
-        auto_dismiss=False, background_color=(1, 1, 1, 1),
+        title=str(title), content=body, size_hint=(0.92, None),
+        height=dialog_height, auto_dismiss=False,
+        background="", background_color=(1, 1, 1, 1),
         title_color=(0.04, 0.13, 0.16, 1),
-        separator_color=(0.04, 0.36, 0.44, 1), title_size="18sp",
+        separator_color=(0.04, 0.52, 0.30, 1), title_size="18sp"
     )
-
-    def resize_dialog(*_):
-        fit_label()
-        dialog.height = min(max(label.height + dp(112), dp(210)), dp(440))
-
-    body.bind(width=resize_dialog)
     close.bind(on_release=dialog.dismiss)
-    dialog.bind(on_open=resize_dialog)
     dialog.open()
+    Clock.schedule_once(lambda _dt: fit_label(), 0)
     return dialog
 
 
@@ -667,7 +937,11 @@ class Store:
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
             category TEXT NOT NULL DEFAULT 'GENERAL', purchase_price REAL NOT NULL DEFAULT 0,
             sale_price REAL NOT NULL DEFAULT 0, stock INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT ''
+            created_at TEXT NOT NULL DEFAULT '',
+            discount_percent REAL NOT NULL DEFAULT 0,
+            discount_start_date TEXT NOT NULL DEFAULT '',
+            discount_end_date TEXT NOT NULL DEFAULT '',
+            discount_min_qty INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS sales(
             id INTEGER PRIMARY KEY AUTOINCREMENT, customer_name TEXT, customer_phone TEXT,
@@ -695,7 +969,11 @@ class Store:
         for column, definition in (("category", "TEXT NOT NULL DEFAULT 'GENERAL'"),
                                    ("purchase_price", "REAL NOT NULL DEFAULT 0"),
                                    ("sale_price", "REAL NOT NULL DEFAULT 0"), ("stock", "INTEGER NOT NULL DEFAULT 0"),
-                                   ("created_at", "TEXT NOT NULL DEFAULT ''")):
+                                   ("created_at", "TEXT NOT NULL DEFAULT ''"),
+                                    ("discount_percent", "REAL NOT NULL DEFAULT 0"),
+                                    ("discount_start_date", "TEXT NOT NULL DEFAULT ''"),
+                                    ("discount_end_date", "TEXT NOT NULL DEFAULT ''"),
+                                    ("discount_min_qty", "INTEGER NOT NULL DEFAULT 0")):
             self._add_column("products", column, definition)
         for column, definition in (("customer_name", "TEXT"), ("customer_phone", "TEXT"),
                                    ("discount", "REAL NOT NULL DEFAULT 0"), ("net_amount", "REAL NOT NULL DEFAULT 0"),
@@ -711,8 +989,11 @@ class Store:
         self.conn.execute("UPDATE sales SET status=CASE WHEN balance<=0 THEN 'PAID' ELSE 'DUE' END WHERE status IS NULL OR status=''")
         self.conn.commit()
 
-    def products(self):
-        return self.conn.execute("SELECT * FROM products ORDER BY name COLLATE NOCASE").fetchall()
+    def products(self, order="name"):
+        ordering = {"newest": "created_at DESC, id DESC", "oldest": "created_at ASC, id ASC",
+                    "low": "stock ASC, name COLLATE NOCASE", "discounted": "name COLLATE NOCASE",
+                    "name": "name COLLATE NOCASE"}.get(order, "name COLLATE NOCASE")
+        return self.conn.execute(f"SELECT * FROM products ORDER BY {ordering}").fetchall()
 
     def find_products(self, query):
         q = (query or "").strip()
@@ -723,22 +1004,60 @@ class Store:
             return rows
         return self.conn.execute("SELECT * FROM products WHERE name LIKE ? ORDER BY name LIMIT 20", (f"%{q}%",)).fetchall()
 
-    def add_product(self, name, category, purchase, sale, stock):
+    def add_stock(self, name, quantity):
+        name = (name or "").strip()
+        if not name:
+            raise ValueError("Product name enter karein.")
+        if quantity <= 0:
+            raise ValueError("Add stock quantity 1 ya us se zyada honi chahiye.")
+        matches = self.find_products(name)
+        if not matches or matches[0]["name"].casefold() != name.casefold():
+            raise ValueError("Exact saved product name enter karein.")
+        with self.conn:
+            self.conn.execute("UPDATE products SET stock=stock+? WHERE id=?", (quantity, matches[0]["id"]))
+        return matches[0]["id"]
+
+    def update_product_prices(self, product_id, purchase, sale):
+        purchase, sale = float(purchase), float(sale)
+        if purchase <= 0 or sale <= 0:
+            raise ValueError("Cost aur selling price 0 se zyada honi chahiye.")
+        with self.conn:
+            cur = self.conn.execute("UPDATE products SET purchase_price=?, sale_price=? WHERE id=?",
+                                    (purchase, sale, int(product_id)))
+            if cur.rowcount != 1:
+                raise ValueError("Saved product nahi mila.")
+
+    def add_product(self, name, category, purchase, sale, stock, discount_percent=0,
+                    discount_start_date="", discount_end_date="", discount_min_qty=0):
         name = name.strip()
         if not name:
             raise ValueError("Product name enter karein.")
         if purchase < 0 or sale < 0 or stock < 0:
             raise ValueError("Prices aur stock negative nahi ho sakte.")
+        if discount_percent < 0 or discount_percent >= 100:
+            raise ValueError("Discount 0 se zyada aur 100% se kam hona chahiye.")
+        if discount_percent:
+            if not discount_start_date or not discount_end_date or discount_min_qty <= 0:
+                raise ValueError("Discount ke liye start date, expiry date aur minimum quantity lazmi hain.")
+            try:
+                start = datetime.strptime(discount_start_date, "%Y-%m-%d").date()
+                end = datetime.strptime(discount_end_date, "%Y-%m-%d").date()
+            except ValueError:
+                raise ValueError("Dates YYYY-MM-DD format mein enter karein.")
+            if end < start:
+                raise ValueError("Expiry date start date se pehle nahi ho sakti.")
+        else:
+            discount_start_date = discount_end_date = ""
+            discount_min_qty = 0
         category = detect_category(name, category)
         with self.conn:
-            existing = self.conn.execute("SELECT id,stock FROM products WHERE LOWER(name)=LOWER(?)", (name,)).fetchone()
-            now = datetime.now().isoformat(timespec="seconds")
+            existing = self.conn.execute("SELECT id FROM products WHERE LOWER(name)=LOWER(?)", (name,)).fetchone()
             if existing:
-                self.conn.execute("UPDATE products SET category=?,purchase_price=?,sale_price=?,stock=stock+? WHERE id=?",
-                                  (category, purchase, sale, stock, existing["id"]))
-                return existing["id"]
-            cur = self.conn.execute("INSERT INTO products(name,category,purchase_price,sale_price,stock,created_at) VALUES(?,?,?,?,?,?)",
-                                    (name, category, purchase, sale, stock, now))
+                raise ValueError("Yeh product pehle se saved hai. Quantity barhane ke liye Stock Management use karein.")
+            now = datetime.now().isoformat(timespec="seconds")
+            cur = self.conn.execute("""INSERT INTO products(name,category,purchase_price,sale_price,stock,created_at,
+                discount_percent,discount_start_date,discount_end_date,discount_min_qty) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (name, category, purchase, sale, stock, now, discount_percent, discount_start_date, discount_end_date, discount_min_qty))
             return cur.lastrowid
 
     def create_sale(self, customer, phone, items, subtotal, discount, paid):
@@ -812,6 +1131,92 @@ class Store:
         return dest_path
 
 
+class AuthScreen(Screen):
+    mode = StringProperty("signup")
+    otp_sent = BooleanProperty(False)
+    status_text = StringProperty("Create an account or sign in using your email address.")
+    busy = BooleanProperty(False)
+    _pending_email = ""
+    _pending_name = ""
+    _pending_mode = ""
+
+    def set_mode(self, mode):
+        if mode not in ("signup", "login"):
+            return
+        self.mode = mode
+        self.otp_sent = False
+        self.busy = False
+        self.ids.otp.text = ""
+        self.status_text = "Enter your name and email to create an account." if mode == "signup" else "Enter your registered email address."
+
+    def primary_action(self):
+        if self.busy:
+            return
+        self.verify_otp() if self.otp_sent else self.send_otp()
+
+    def send_otp(self):
+        email = self.ids.email.text.strip().lower()
+        name = self.ids.retailer_name.text.strip() if self.mode == "signup" else ""
+        if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+            show_message("Please enter a valid email address.", "Email required")
+            return
+        if self.mode == "signup" and (len(name) < 2 or len(name) > 60):
+            show_message("Retailer name must be 2–60 characters.", "Name required")
+            return
+        self.busy = True
+        self.status_text = "Requesting secure email verification code…"
+        try:
+            app = App.get_running_app()
+            app.supabase_request_otp(email, self.mode, name)
+            self._pending_email = email
+            self._pending_name = name
+            self._pending_mode = self.mode
+            self.otp_sent = True
+            self.ids.otp.text = ""
+            self.status_text = "If the address is eligible, a 6-digit code has been sent. Check Inbox and Spam."
+        except Exception as exc:
+            self.status_text = "Could not send verification email."
+            show_message(str(exc), "Email OTP unavailable")
+        finally:
+            self.busy = False
+
+    def verify_otp(self):
+        code = self.ids.otp.text.strip()
+        if not re.fullmatch(r"\d{6}", code):
+            show_message("Please enter the 6-digit code from your email.", "Invalid OTP")
+            return
+        self.busy = True
+        self.status_text = "Verifying your email code…"
+        try:
+            app = App.get_running_app()
+            session = app.supabase_verify_otp(self._pending_email, code, self._pending_mode)
+            user = session.get("user") or {}
+            uid = str(user.get("id") or "")
+            if not uid:
+                raise ValueError("Supabase verified the code but did not return an account ID.")
+            metadata = user.get("user_metadata") or {}
+            account_name = str(metadata.get("customer_name") or self._pending_name or self._pending_email.split("@")[0])
+            app.activate_retailer(uid, account_name, self._pending_email, session)
+            self.otp_sent = False
+            self.ids.otp.text = ""
+            self.status_text = "Email verified successfully."
+            app.go("home")
+            app.refresh_home()
+            show_message("Your email is verified and your retailer workspace is ready.", "Welcome")
+        except Exception as exc:
+            self.status_text = "Email verification failed. Check the code and try again."
+            show_message(str(exc), "OTP verification failed")
+        finally:
+            self.busy = False
+
+    def change_email(self):
+        self.otp_sent = False
+        self.ids.otp.text = ""
+        self._pending_email = ""
+        self._pending_name = ""
+        self.status_text = "Enter the correct email address and request a new code."
+
+
 class MainScreen(Screen):
     summary_text = StringProperty("")
     def on_pre_enter(self, *args): self.refresh_summary()
@@ -821,30 +1226,409 @@ class MainScreen(Screen):
 
 
 class ProductsScreen(Screen):
-    listing_text = StringProperty("")
-    def on_pre_enter(self, *args): self.refresh()
-    def refresh(self):
-        rows = App.get_running_app().store.products()
-        if not rows:
-            self.listing_text = "No products yet. Add your first product above."
+    """Navigation hub for product entry and stock management."""
+
+
+class AddProductScreen(Screen):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.discount_panel = None
+        self.discount_fields = {}
+
+    def on_pre_enter(self, *args):
+        for key in ("pname", "pcategory", "purchase", "saleprice", "stock"):
+            self.ids[key].text = ""
+        self.ids.discount_slot.clear_widgets()
+        self.ids.discount_slot.height = 0
+        self.ids.discount_toggle.text = "＋  Add Discount (Optional)"
+        self.discount_panel = None
+        self.discount_fields = {}
+
+    def toggle_discount_form(self):
+        slot = self.ids.discount_slot
+        if self.discount_panel is not None:
+            slot.clear_widgets()
+            slot.height = 0
+            self.discount_panel = None
+            self.discount_fields = {}
+            self.ids.discount_toggle.text = "＋  Add Discount (Optional)"
             return
-        blocks = []
-        for p in rows:
-            status = "OUT OF STOCK" if p["stock"] <= 0 else ("LOW STOCK" if p["stock"] <= LOW_STOCK_THRESHOLD else "IN STOCK")
-            blocks.append(f"ID {p['id']} • {p['name']}\nCategory: {p['category']} | {status}\nStock: {p['stock']} | Cost: {money(p['purchase_price'])} | Sale: {money(p['sale_price'])}")
-        self.listing_text = "\n\n".join(blocks)
+
+        panel = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(248), spacing=dp(7))
+        heading = Label(
+            text="[b]PRODUCT DISCOUNT[/b]", markup=True, size_hint_y=None, height=dp(25),
+            color=(0.12, 0.25, 0.29, 1), font_size="14sp", halign="left"
+        )
+        heading.bind(size=lambda w, *_: setattr(w, "text_size", w.size))
+        panel.add_widget(heading)
+
+        def make_field(hint, key, input_filter=None):
+            field = TextInput(
+                hint_text=hint, multiline=False, size_hint_y=None, height=dp(48),
+                padding=[dp(12), dp(13), dp(12), dp(10)], font_size="15sp",
+                foreground_color=(0.10, 0.17, 0.19, 1),
+                hint_text_color=(0.42, 0.49, 0.51, 1),
+                cursor_color=(0.05, 0.40, 0.48, 1),
+                background_normal="", background_active="",
+                background_color=(0.93, 0.96, 0.97, 1),
+                input_filter=input_filter
+            )
+            self.discount_fields[key] = field
+            panel.add_widget(field)
+
+        make_field("Discount percentage (e.g. 10)", "percent", "float")
+        make_field("Expiry date (DDMM, e.g. 3011)", "expiry", "int")
+        make_field("Minimum qualifying quantity", "quantity", "int")
+        note = Label(
+            text="Promotion starts automatically today. Only expiry date and qualifying quantity are required.",
+            size_hint_y=None, height=dp(42), color=(0.39, 0.47, 0.50, 1),
+            font_size="12sp", halign="left", valign="middle"
+        )
+        note.bind(size=lambda w, *_: setattr(w, "text_size", w.size))
+        panel.add_widget(note)
+        slot.add_widget(panel)
+        slot.height = panel.height
+        self.discount_panel = panel
+        self.ids.discount_toggle.text = "−  Remove Discount"
+
+    @staticmethod
+    def _parse_expiry(raw):
+        digits = "".join(ch for ch in (raw or "") if ch.isdigit())
+        if len(digits) != 4:
+            raise ValueError("Expiry date mein DDMM format mein 4 digits enter karein, misal: 3011.")
+        day, month = int(digits[:2]), int(digits[2:])
+        year = datetime.now().year
+        try:
+            expiry = datetime(year, month, day).date()
+        except ValueError:
+            raise ValueError("Expiry date valid nahi. DDMM dobara check karein.")
+        return expiry.strftime("%Y-%m-%d")
+
     def add_product(self):
         try:
-            name = self.ids.pname.text.strip()
+            raw_name = self.ids.pname.text.strip()
+            name = correct_product_spelling(raw_name)
             category = self.ids.pcategory.text.strip()
             purchase = float(self.ids.purchase.text or 0)
             sale = float(self.ids.saleprice.text or 0)
             stock = int(self.ids.stock.text or 0)
-            pid = App.get_running_app().store.add_product(name, category, purchase, sale, stock)
-            for key in ("pname", "pcategory", "purchase", "saleprice", "stock"): self.ids[key].text = ""
-            self.refresh(); App.get_running_app().refresh_home()
-            show_message(f"Product saved/updated. Product ID: {pid}\nCategory: {detect_category(name, category)}", "Saved")
-        except (ValueError, sqlite3.Error) as exc: show_message(str(exc), "Check product details")
+            pct = float(self.discount_fields.get("percent").text or 0) if self.discount_fields else 0
+            qty = int(self.discount_fields.get("quantity").text or 0) if self.discount_fields else 0
+            if pct:
+                start = datetime.now().strftime("%Y-%m-%d")
+                end = self._parse_expiry(self.discount_fields.get("expiry").text)
+            else:
+                start = end = ""
+                qty = 0
+            pid = App.get_running_app().store.add_product(
+                name, category, purchase, sale, stock, pct, start, end, qty
+            )
+            App.get_running_app().refresh_home()
+            App.get_running_app().root.get_screen("stock").refresh()
+            self.on_pre_enter()
+            message = f"Product saved successfully.\nProduct ID: {pid}\nAvailable in Stock Management and checkout."
+            if raw_name.casefold() != name.casefold():
+                message += f"\nSpelling corrected: {raw_name} → {name}"
+            show_message(message, "Product saved")
+        except (ValueError, sqlite3.Error) as exc:
+            show_message(str(exc), "Check product details")
+
+
+class StockScreen(Screen):
+    filter_summary = StringProperty("Showing all products")
+    active_filter = "All products"
+
+    def on_pre_enter(self, *args):
+        self.refresh()
+
+    search_query = ""
+
+    def set_filter(self, value):
+        self.active_filter = value
+        self.filter_summary = "Filter: " + value
+        self.refresh()
+
+    def set_search(self, value):
+        self.search_query = (value or "").strip().casefold()
+        self.refresh()
+
+    def open_filters(self):
+        store = App.get_running_app().store
+        categories = sorted({str(p["category"] or "GENERAL") for p in store.products()}, key=str.casefold)
+        options = ["All products", "Newest product", "Old products", "Low stock products", "Discounted products"]
+        options.extend(category for category in categories if category not in options)
+        content = BoxLayout(orientation="vertical", padding=dp(10), spacing=dp(6), size_hint_y=None)
+        content.bind(minimum_height=content.setter("height"))
+        scroller = ScrollView(do_scroll_x=False)
+        menu = BoxLayout(orientation="vertical", spacing=dp(6), size_hint_y=None)
+        menu.bind(minimum_height=menu.setter("height"))
+        popup = Popup(
+            title="Filter Stock",
+            content=scroller,
+            size_hint=(0.9, 0.78),
+            background_color=(1, 1, 1, 1),
+            title_color=(0.08, 0.16, 0.18, 1),
+            separator_color=(0.055, 0.34, 0.42, 1),
+            title_size="18sp"
+        )
+        for option in options:
+            button = Button(
+                text=option, size_hint_y=None, height=dp(44),
+                background_normal="", background_down="",
+                background_color=(0.88, 0.94, 0.95, 1),
+                color=(0.07, 0.26, 0.31, 1), font_size="14sp"
+            )
+            button.bind(on_release=lambda instance, selected=option: (popup.dismiss(), self.set_filter(selected)))
+            menu.add_widget(button)
+        scroller.add_widget(menu)
+        popup.open()
+
+    @staticmethod
+    def edit_product_prices(product):
+        body = DialogBody(orientation="vertical", padding=dp(12), spacing=dp(8))
+        body.add_widget(Label(text=str(product["name"]), size_hint_y=None, height=dp(30),
+                              color=(0.08,0.16,0.18,1), halign="left"))
+        cost = TextInput(text=str(product["purchase_price"]), hint_text="Cost / purchase price (Rs.)",
+                         input_filter="float", multiline=False, size_hint_y=None, height=dp(48))
+        selling = TextInput(text=str(product["sale_price"]), hint_text="Selling price (Rs.)",
+                            input_filter="float", multiline=False, size_hint_y=None, height=dp(48))
+        body.add_widget(cost); body.add_widget(selling)
+        body.add_widget(Label(text="Only future sales use these prices. Past sale records remain unchanged.",
+                              size_hint_y=None, height=dp(42), color=(0.35,0.43,0.46,1), font_size="12sp"))
+        row = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(8))
+        cancel = Button(text="Cancel", background_normal="", background_color=(0.88,0.94,0.95,1), color=(0.07,0.26,0.31,1))
+        save = Button(text="Save prices", background_normal="", background_color=(0.055,0.34,0.42,1), color=(1,1,1,1), bold=True)
+        row.add_widget(cancel); row.add_widget(save); body.add_widget(row)
+        popup = Popup(title="Update product prices", content=body, size_hint=(0.92,None), height=dp(310),
+                      auto_dismiss=False, background_color=(1,1,1,1),
+                      title_color=(0.08,0.16,0.18,1), separator_color=(0.08,0.52,0.30,1))
+        cancel.bind(on_release=popup.dismiss)
+        def save_prices(*_):
+            try:
+                App.get_running_app().store.update_product_prices(product["id"], float(cost.text or 0), float(selling.text or 0))
+                popup.dismiss()
+                App.get_running_app().root.get_screen("stock").refresh()
+                show_message("Cost and selling prices updated. Past sales history remains unchanged.", "Prices updated")
+            except (ValueError, sqlite3.Error) as exc:
+                show_message(str(exc), "Check price details")
+        save.bind(on_release=save_prices)
+        popup.open()
+
+    @staticmethod
+    def edit_product_discount(product):
+        store = App.get_running_app().store
+        active = float(product["discount_percent"] or 0) > 0
+        body = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(8))
+        body.add_widget(Label(
+            text=f"[b]{product['name']}[/b]\\nManage this product's promotion",
+            markup=True, size_hint_y=None, height=dp(48),
+            color=(0.08, 0.16, 0.18, 1), halign="left"
+        ))
+        percent = TextInput(
+            text=str(product["discount_percent"] or "") if active else "",
+            hint_text="Discount percentage (e.g. 10)",
+            input_filter="float", multiline=False, size_hint_y=None, height=dp(46)
+        )
+        expiry = TextInput(
+            text=datetime.strptime(product["discount_end_date"], "%Y-%m-%d").strftime("%d%m")
+                 if active and product["discount_end_date"] else "",
+            hint_text="Expiry date (DDMM, e.g. 3011)",
+            input_filter="int", multiline=False, size_hint_y=None, height=dp(46)
+        )
+        quantity = TextInput(
+            text=str(product["discount_min_qty"] or "") if active else "",
+            hint_text="Minimum qualifying quantity",
+            input_filter="int", multiline=False, size_hint_y=None, height=dp(46)
+        )
+        body.add_widget(percent); body.add_widget(expiry); body.add_widget(quantity)
+        start_date = product["discount_start_date"] if active else datetime.now().strftime("%Y-%m-%d")
+        start_display = datetime.strptime(start_date, "%Y-%m-%d").strftime("%d-%m-%Y")
+        body.add_widget(Label(
+            text="Promotion starts: " + start_display + "\\nStart date is automatic; only expiry is required.",
+            size_hint_y=None, height=dp(42), color=(0.35, 0.43, 0.46, 1), font_size="12sp"
+        ))
+        buttons = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(6))
+        cancel = Button(text="Cancel", background_normal="", background_color=(0.88,0.94,0.95,1), color=(0.07,0.26,0.31,1))
+        save = Button(text="Save discount", background_normal="", background_color=(0.055,0.34,0.42,1), color=(1,1,1,1), bold=True)
+        buttons.add_widget(cancel); buttons.add_widget(save); body.add_widget(buttons)
+        popup = Popup(title="Product discount", content=body, size_hint=(0.92,None), height=dp(370),
+                      auto_dismiss=False, background_color=(1,1,1,1),
+                      title_color=(0.08,0.16,0.18,1), separator_color=(0.08,0.52,0.30,1))
+        cancel.bind(on_release=popup.dismiss)
+
+        def save_discount(*_args):
+            try:
+                pct = float(percent.text or 0)
+                if pct <= 0 or pct >= 100:
+                    raise ValueError("Discount percentage 0 se zyada aur 100 se kam enter karein.")
+                digits = "".join(ch for ch in expiry.text if ch.isdigit())
+                if len(digits) != 4:
+                    raise ValueError("Expiry date DDMM format mein 4 digits enter karein, misal: 3011.")
+                day, month = int(digits[:2]), int(digits[2:])
+                today = datetime.now().date()
+                try:
+                    end = datetime(today.year, month, day).date()
+                except ValueError:
+                    raise ValueError("Expiry date valid nahi. DDMM dobara check karein.")
+                if end < today:
+                    raise ValueError("Expiry date aaj ya future ki honi chahiye.")
+                qty = int(quantity.text or 0)
+                if qty <= 0:
+                    raise ValueError("Minimum qualifying quantity 1 ya us se zyada honi chahiye.")
+                with store.conn:
+                    store.conn.execute(
+                        "UPDATE products SET discount_percent=?, discount_start_date=?, discount_end_date=?, discount_min_qty=? WHERE id=?",
+                        (pct, start_date, end.strftime("%Y-%m-%d"), qty, product["id"])
+                    )
+                popup.dismiss()
+                App.get_running_app().root.get_screen("stock").refresh()
+                show_message("Product discount saved successfully.", "Discount updated")
+            except (ValueError, sqlite3.Error) as exc:
+                show_message(str(exc), "Check discount details")
+
+        def turn_off(*_args):
+            with store.conn:
+                store.conn.execute(
+                    "UPDATE products SET discount_percent=0, discount_start_date='', discount_end_date='', discount_min_qty=0 WHERE id=?",
+                    (product["id"],)
+                )
+            popup.dismiss()
+            App.get_running_app().root.get_screen("stock").refresh()
+            show_message("Product discount has been turned off.", "Discount disabled")
+
+        save.bind(on_release=save_discount)
+        if active:
+            off = Button(text="Turn discount off", size_hint_y=None, height=dp(42),
+                         background_normal="", background_color=(0.98,0.89,0.88,1),
+                         color=(0.55,0.15,0.12,1))
+            off.bind(on_release=turn_off)
+            body.add_widget(off)
+            popup.height = dp(420)
+        popup.open()
+
+    def add_stock(self):
+        try:
+            name = self.ids.stock_product_name.text.strip()
+            quantity = int(self.ids.stock_add_qty.text or 0)
+            pid = App.get_running_app().store.add_stock(name, quantity)
+            self.ids.stock_product_name.text = ""
+            self.ids.stock_add_qty.text = ""
+            self.refresh()
+            App.get_running_app().refresh_home()
+            show_message(f"Stock updated for product ID {pid}.", "Stock updated")
+        except (ValueError, sqlite3.Error) as exc:
+            show_message(str(exc), "Unable to update stock")
+
+    @staticmethod
+    def _make_product_card(product):
+        has_discount = float(product["discount_percent"] or 0) > 0
+        card = BoxLayout(
+            orientation="vertical", size_hint_y=None, height=dp(190 if has_discount else 164),
+            padding=[dp(10), dp(8), dp(10), dp(8)], spacing=dp(5)
+        )
+        with card.canvas.before:
+            Color(1, 1, 1, 1)
+            bg = RoundedRectangle(pos=card.pos, size=card.size, radius=[dp(10)])
+        card.bind(pos=lambda widget, value: setattr(bg, "pos", value))
+        card.bind(size=lambda widget, value: setattr(bg, "size", value))
+        status = "OUT OF STOCK" if int(product["stock"]) <= 0 else (
+            "LOW STOCK" if int(product["stock"]) <= LOW_STOCK_THRESHOLD else "IN STOCK"
+        )
+        title = Label(
+            text=f"[b]{product['name']}[/b]  •  {status}",
+            markup=True, size_hint_y=None, height=dp(26),
+            color=(0.07, 0.19, 0.23, 1), font_size="14sp",
+            halign="left", valign="middle", text_size=(Window.width - dp(70), None)
+        )
+        details = GridLayout(cols=2, rows=2, spacing=dp(4), size_hint_y=None, height=dp(66))
+        fields = [
+            ("CATEGORY", str(product["category"] or "GENERAL")),
+            ("COST PRICE", money(product["purchase_price"])),
+            ("SELL PRICE", money(product["sale_price"])),
+            ("QUANTITY", str(product["stock"]))
+        ]
+        for label, value in fields:
+            cell = Label(
+                text=f"[color=64777d]{label}[/color]  [b]{value}[/b]",
+                markup=True, color=(0.12, 0.22, 0.25, 1), font_size="11sp",
+                halign="left", valign="middle", text_size=(Window.width / 2 - dp(40), None)
+            )
+            details.add_widget(cell)
+        card.add_widget(title)
+        card.add_widget(details)
+        if has_discount:
+            def display_date(value):
+                try:
+                    return datetime.strptime(value, "%Y-%m-%d").strftime("%d-%m-%Y")
+                except (TypeError, ValueError):
+                    return value or "—"
+            offer = Label(
+                text=f"[b]OFFER[/b]  {float(product['discount_percent']):g}% off • Qty {int(product['discount_min_qty'])}+ • Until {display_date(product['discount_end_date'])}",
+                markup=True, size_hint_y=None, height=dp(22),
+                color=(0.05, 0.40, 0.30, 1), font_size="11sp",
+                halign="left", valign="middle", text_size=(Window.width - dp(60), None)
+            )
+            card.add_widget(offer)
+        actions = BoxLayout(size_hint_y=None, height=dp(36), spacing=dp(6))
+        price_edit = Button(text="Update prices", background_normal="", background_down="",
+                            background_color=(0.055,0.34,0.42,1), color=(1,1,1,1), font_size="11sp")
+        price_edit.bind(on_release=lambda *_args, p=dict(product): StockScreen.edit_product_prices(p))
+        edit = Button(
+            text="Edit discount" if has_discount else "Add discount",
+            background_normal="", background_down="",
+            background_color=(0.88, 0.94, 0.95, 1),
+            color=(0.07, 0.26, 0.31, 1), font_size="11sp"
+        )
+        edit.bind(on_release=lambda *_args, p=dict(product): StockScreen.edit_product_discount(p))
+        actions.add_widget(price_edit)
+        actions.add_widget(edit)
+        card.add_widget(actions)
+        return card
+
+    def refresh(self):
+        container = self.ids.stock_rows
+        container.clear_widgets()
+        all_rows = list(App.get_running_app().store.products(order="name"))
+        selected = self.active_filter
+        if self.search_query:
+            query = self.search_query
+            all_rows = [
+                p for p in all_rows
+                if query in str(p["name"] or "").casefold()
+                or query in str(p["category"] or "").casefold()
+            ]
+        if selected == "Newest product":
+            all_rows.sort(key=lambda p: (p["created_at"] or "", int(p["id"])), reverse=True)
+        elif selected == "Old products":
+            all_rows.sort(key=lambda p: (p["created_at"] or "", int(p["id"])))
+        elif selected == "Low stock products":
+            all_rows = [p for p in all_rows if int(p["stock"]) <= LOW_STOCK_THRESHOLD]
+        elif selected == "Discounted products":
+            all_rows = [p for p in all_rows if float(p["discount_percent"] or 0) > 0]
+        elif selected != "All products":
+            all_rows = [p for p in all_rows if str(p["category"] or "GENERAL").casefold() == selected.casefold()]
+
+        if not all_rows:
+            container.add_widget(Label(
+                text="No products match this filter.", size_hint_y=None, height=dp(80),
+                color=(0.14, 0.22, 0.25, 1), font_size="14sp"
+            ))
+            return
+
+        grouped = {}
+        for product in all_rows:
+            category = str(product["category"] or "GENERAL").upper()
+            grouped.setdefault(category, []).append(product)
+        for category in sorted(grouped, key=str.casefold):
+            header = Label(
+                text=f"[b]{category}[/b]  •  {len(grouped[category])} product(s)",
+                markup=True, size_hint_y=None, height=dp(32),
+                color=(0.055, 0.34, 0.42, 1), font_size="14sp",
+                halign="left", valign="middle", text_size=(Window.width - dp(35), None)
+            )
+            container.add_widget(header)
+            for product in grouped[category]:
+                container.add_widget(self._make_product_card(product))
 
 
 class SaleScreen(Screen):
@@ -881,21 +1665,45 @@ class SaleScreen(Screen):
         if product["stock"] < already + qty:
             show_message(f"{product['name']} ka available stock {product['stock']} hai.", "Insufficient stock"); return
         if existing: existing["quantity"] += qty
-        else: self.cart.append({"product_id": product["id"], "name": product["name"], "category": detect_category(product["name"], product["category"]), "quantity": qty, "price": float(product["sale_price"]), "purchase_price": float(product["purchase_price"])})
+        else: self.cart.append({"product_id": product["id"], "name": product["name"], "category": detect_category(product["name"], product["category"]), "quantity": qty, "price": float(product["sale_price"]), "purchase_price": float(product["purchase_price"]), "discount_percent": float(product.get("discount_percent", 0) or 0), "discount_start_date": product.get("discount_start_date", ""), "discount_end_date": product.get("discount_end_date", ""), "discount_min_qty": int(product.get("discount_min_qty", 0) or 0)})
         self.ids.product_name.text = ""; self.ids.quantity.text = ""; self.update_cart()
     def subtotal(self): return round(sum(i["quantity"] * i["price"] for i in self.cart), 2)
+    @staticmethod
+    def _item_discount(item, today=None):
+        today = today or datetime.now().date()
+        pct = float(item.get("discount_percent", 0) or 0)
+        minimum = int(item.get("discount_min_qty", 0) or 0)
+        if pct <= 0 or minimum <= 0 or int(item["quantity"]) < minimum:
+            return 0.0
+        try:
+            start = datetime.strptime(item.get("discount_start_date", ""), "%Y-%m-%d").date()
+            end = datetime.strptime(item.get("discount_end_date", ""), "%Y-%m-%d").date()
+        except (TypeError, ValueError):
+            return 0.0
+        if not start <= today <= end:
+            return 0.0
+        return round(int(item["quantity"]) * float(item["price"]) * pct / 100, 2)
+
+    def product_discount_amount(self):
+        today = datetime.now().date()
+        return round(min(self.subtotal(), sum(self._item_discount(item, today) for item in self.cart)), 2)
+
     def discount_amount(self):
-        subtotal = self.subtotal(); mode = self.ids.discount_mode.text
-        try: value = float(self.ids.discount_value.text or 0)
-        except ValueError: return 0
-        if mode == "Off": return 0
-        if value < 0: return 0
-        if mode == "Percentage": return round(min(subtotal, subtotal * min(value, 100) / 100), 2)
-        return round(min(subtotal, value), 2)
+        # Product promotions are calculated by the app; no manual checkout discount is needed.
+        return self.product_discount_amount()
     def update_cart(self):
         if not self.cart: self.cart_text = "Cart is empty. Add a product by name."
         else:
-            self.cart_text = "\n\n".join(f"{i+1}. {x['name']} ({x['category']})\n   Qty {x['quantity']} × {money(x['price'])} = {money(x['quantity']*x['price'])}" for i,x in enumerate(self.cart))
+            today = datetime.now().date()
+            lines = []
+            for i, item in enumerate(self.cart):
+                line_total = item["quantity"] * item["price"]
+                item_discount = self._item_discount(item, today)
+                line = f"{i+1}. {item['name']} ({item['category']})\n   Qty {item['quantity']} × {money(item['price'])} = {money(line_total)}"
+                if item_discount:
+                    line += f"\n   Automatic product discount: −{money(item_discount)}"
+                lines.append(line)
+            self.cart_text = "\n\n".join(lines)
         sub = self.subtotal(); disc = self.discount_amount()
         self.total_text = f"Subtotal: {money(sub)}   Discount: {money(disc)}\nFinal payable: {money(max(0, sub-disc))}"
     def remove_last_item(self):
@@ -926,7 +1734,7 @@ class SaleScreen(Screen):
             received_amount = float(received or 0)
             if received_amount < 0:
                 raise ValueError("Received amount negative nahi ho sakti.")
-            customer = self.ids.customer.text.strip() or "Walk-in"
+            customer = "Walk-in"
             phone = self.ids.phone.text.strip()
             store = App.get_running_app().store
             net_expected = round(subtotal - discount, 2)
@@ -934,13 +1742,18 @@ class SaleScreen(Screen):
             credited_paid = min(received_amount, net_expected)
             sale_id, net, due = store.create_sale(customer, phone, self.cart, subtotal, discount, credited_paid)
             items = [dict(x) for x in self.cart]
+            today = datetime.now().date()
+            for item in items:
+                item["discount_amount"] = self._item_discount(item, today)
             invoice_path = App.get_running_app().generate_invoice(sale_id, customer, phone, items, subtotal, discount, net, credited_paid, due, change)
-            popup.dismiss(); self.cart = []; self.ids.customer.text = ""; self.ids.phone.text = ""; self.ids.discount_value.text = ""; self.ids.discount_mode.text = "Off"; self.update_cart()
+            popup.dismiss(); self.cart = []; self.ids.phone.text = ""; self.update_cart()
             App.get_running_app().refresh_home()
             message = f"Sale #{sale_id} saved successfully.\nSubtotal: {money(subtotal)}\nDiscount: {money(discount)}\nPayable: {money(net)}\nAmount tendered: {money(received_amount)}\nChange to return: {money(change)}\nOutstanding due: {money(due)}"
             if invoice_path: message += f"\n\nInvoice saved at:\n{invoice_path}"
-            show_message(message, "Sale completed")
-        except (ValueError, sqlite3.Error) as exc: show_message(str(exc), "Sale not saved")
+            Clock.schedule_once(lambda _dt, text=message: show_message(text, "Sale completed"), 0.25)
+        except (ValueError, sqlite3.Error) as exc:
+            popup.dismiss()
+            Clock.schedule_once(lambda _dt, text=str(exc): show_message(text, "Sale not saved"), 0.25)
 
 
 class ExpensesScreen(Screen):
@@ -1003,11 +1816,108 @@ class UdhaarScreen(Screen):
 class MaherUmarPOSApp(App):
     def build(self):
         self.title = APP_TITLE
-        self.store = Store(os.path.join(self.user_data_dir, DB_NAME))
+        self.session_path = os.path.join(self.user_data_dir, "retailer_session.json")
+        self.current_retailer = self._load_local_session()
+        if self.current_retailer:
+            self.store = Store(self._account_db_path(self.current_retailer["uid"]))
+        else:
+            self.store = Store(os.path.join(self.user_data_dir, DB_NAME))
         Builder.load_string(KV)
         manager = ScreenManager()
-        manager.add_widget(MainScreen(name="home")); manager.add_widget(ProductsScreen(name="products")); manager.add_widget(SaleScreen(name="sale")); manager.add_widget(ExpensesScreen(name="expenses")); manager.add_widget(ReportsScreen(name="reports")); manager.add_widget(HistoryScreen(name="history")); manager.add_widget(UdhaarScreen(name="udhaar"))
+        manager.add_widget(AuthScreen(name="auth"))
+        manager.add_widget(MainScreen(name="home")); manager.add_widget(ProductsScreen(name="products")); manager.add_widget(AddProductScreen(name="add_products")); manager.add_widget(StockScreen(name="stock")); manager.add_widget(SaleScreen(name="sale")); manager.add_widget(ExpensesScreen(name="expenses")); manager.add_widget(ReportsScreen(name="reports")); manager.add_widget(HistoryScreen(name="history")); manager.add_widget(UdhaarScreen(name="udhaar"))
+        manager.current = "home" if self.current_retailer else "auth"
         return manager
+
+    def _load_local_session(self):
+        try:
+            with open(self.session_path, "r", encoding="utf-8") as source:
+                data = json.load(source)
+            if isinstance(data, dict) and data.get("uid") and data.get("name"):
+                return data
+        except (OSError, ValueError, TypeError):
+            pass
+        return None
+
+    def _save_local_session(self, uid, name, email, session):
+        os.makedirs(self.user_data_dir, exist_ok=True)
+        data = {"uid": uid, "name": name, "email": email,
+                "access_token": session.get("access_token", ""),
+                "refresh_token": session.get("refresh_token", ""),
+                "token_type": session.get("token_type", "bearer"),
+                "saved_at": datetime.now().isoformat()}
+        temp = self.session_path + ".tmp"
+        with open(temp, "w", encoding="utf-8") as target:
+            json.dump(data, target)
+        os.replace(temp, self.session_path)
+
+    def _supabase_auth_request(self, endpoint, payload):
+        encoded = json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(
+            SUPABASE_URL + endpoint, data=encoded,
+            headers={"apikey": SUPABASE_PUBLISHABLE_KEY,
+                     "Authorization": "Bearer " + SUPABASE_PUBLISHABLE_KEY,
+                     "Content-Type": "application/json"},
+            method="POST")
+        try:
+            context = ssl.create_default_context(cafile=certifi.where())
+            with urllib.request.urlopen(request, timeout=30, context=context) as response:
+                result = json.loads(response.read().decode("utf-8"))
+                if not isinstance(result, dict):
+                    raise ValueError("Supabase returned an invalid authentication response.")
+                return result
+        except urllib.error.HTTPError as exc:
+            try:
+                body = json.loads(exc.read().decode("utf-8"))
+                detail = body.get("msg") or body.get("message") or body.get("error_description") or body.get("error") or "Request rejected"
+            except Exception:
+                detail = "HTTP " + str(exc.code)
+            raise ValueError(str(detail))
+        except (urllib.error.URLError, TimeoutError, ssl.SSLError) as exc:
+            reason = getattr(exc, "reason", exc)
+            detail = str(reason).strip() or exc.__class__.__name__
+            raise ValueError("Secure connection to Supabase could not be established: " + detail[:220] + ". Check internet/date-time and try again.") from exc
+
+    def supabase_request_otp(self, email, purpose, name=""):
+        payload = {"email": email, "create_user": purpose == "signup"}
+        if purpose == "signup":
+            payload["data"] = {"account_type": "retailer", "customer_name": name}
+        return self._supabase_auth_request("/auth/v1/otp", payload)
+
+    def supabase_verify_otp(self, email, token, purpose="login"):
+        return self._supabase_auth_request("/auth/v1/verify",
+                                           {"email": email, "token": token, "type": "signup" if purpose == "signup" else "email"})
+
+    def _account_db_path(self, uid):
+        safe_id = hashlib.sha256(str(uid).encode("utf-8")).hexdigest()[:24]
+        return os.path.join(self.user_data_dir, "retailer_" + safe_id + ".db")
+
+    def activate_retailer(self, uid, name, email, session):
+        target = self._account_db_path(uid)
+        current_path = os.path.abspath(self.store.db_path)
+        if current_path != os.path.abspath(target):
+            self.store.conn.close()
+            old_uid = (self.current_retailer or {}).get("uid")
+            old_path = self._account_db_path(old_uid) if old_uid else ""
+            legacy_path = os.path.join(self.user_data_dir, DB_NAME)
+            source_path = old_path if old_path and os.path.exists(old_path) else legacy_path
+            if not os.path.exists(target) and source_path and os.path.exists(source_path):
+                shutil.copy2(source_path, target)
+            self.store = Store(target)
+        self.current_retailer = {"uid": uid, "name": name, "email": email}
+        self._save_local_session(uid, name, email, session)
+
+    def sign_out(self):
+        try:
+            if os.path.exists(self.session_path):
+                os.remove(self.session_path)
+        except Exception as exc:
+            show_message("Sign out failed: " + str(exc), "Sign out error")
+            return
+        self.current_retailer = None
+        self.go("auth")
+        show_message("You have been signed out. This retailer's local database remains preserved.", "Signed out")
+
     def go(self, screen_name):
         self.root.current = screen_name
     def refresh_home(self):
@@ -1016,6 +1926,102 @@ class MaherUmarPOSApp(App):
         try:
             path = self.store.backup(); show_message(f"Database backup created successfully:\n{path}\n\nKeep a copy outside the app as well.", "Backup complete")
         except Exception as exc: show_message(f"Backup failed: {exc}", "Backup error")
+    def export_database_backup(self):
+        try:
+            from android import activity
+            from jnius import autoclass
+            Intent = autoclass("android.content.Intent")
+            intent = Intent(Intent.ACTION_CREATE_DOCUMENT)
+            intent.addCategory(Intent.CATEGORY_OPENABLE)
+            intent.setType("application/octet-stream")
+            intent.putExtra(Intent.EXTRA_TITLE, "maher_umar_backup_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".db")
+            activity.bind(on_activity_result=self._on_export_backup_result)
+            autoclass("org.kivy.android.PythonActivity").mActivity.startActivityForResult(intent, 7411)
+        except Exception as exc:
+            show_message("Export start nahi ho saka: " + str(exc), "Export unavailable")
+
+    def _on_export_backup_result(self, request_code, result_code, intent):
+        if request_code != 7411: return
+        try:
+            from android import activity
+            from jnius import autoclass, jarray
+            activity.unbind(on_activity_result=self._on_export_backup_result)
+            if result_code != -1 or intent is None:
+                show_message("Backup export cancel kar diya gaya.", "Export cancelled"); return
+            backup_path = self.store.backup()
+            resolver = autoclass("org.kivy.android.PythonActivity").mActivity.getContentResolver()
+            output = resolver.openOutputStream(intent.getData())
+            if output is None: raise IOError("Selected destination open nahi ho saki.")
+            try:
+                with open(backup_path, "rb") as source:
+                    while True:
+                        chunk = source.read(65536)
+                        if not chunk: break
+                        output.write(jarray("b")([b if b < 128 else b - 256 for b in chunk]))
+                output.flush()
+            finally: output.close()
+            show_message("Backup selected folder mein export ho gaya.", "Backup exported")
+        except Exception as exc:
+            show_message("Backup export failed: " + str(exc), "Export error")
+
+    def import_database_backup(self):
+        try:
+            from android import activity
+            from jnius import autoclass
+            Intent = autoclass("android.content.Intent")
+            intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
+            intent.addCategory(Intent.CATEGORY_OPENABLE)
+            intent.setType("*/*")
+            activity.bind(on_activity_result=self._on_import_backup_result)
+            autoclass("org.kivy.android.PythonActivity").mActivity.startActivityForResult(intent, 7412)
+        except Exception as exc:
+            show_message("Import start nahi ho saka: " + str(exc), "Import unavailable")
+
+    def _on_import_backup_result(self, request_code, result_code, intent):
+        if request_code != 7412: return
+        temp_path = self.store.db_path + ".restore.tmp"
+        try:
+            from android import activity
+            from jnius import autoclass, jarray
+            activity.unbind(on_activity_result=self._on_import_backup_result)
+            if result_code != -1 or intent is None:
+                show_message("Restore cancel kar diya gaya. Existing data safe hai.", "Restore cancelled"); return
+            resolver = autoclass("org.kivy.android.PythonActivity").mActivity.getContentResolver()
+            stream = resolver.openInputStream(intent.getData())
+            if stream is None: raise IOError("Selected file read nahi ho saki.")
+            try:
+                buf = jarray("b")([0] * 65536)
+                with open(temp_path, "wb") as target:
+                    while True:
+                        count = stream.read(buf)
+                        if count <= 0: break
+                        target.write(bytes((int(buf[i]) & 255) for i in range(count)))
+            finally: stream.close()
+            check = sqlite3.connect(temp_path)
+            try:
+                integrity = check.execute("PRAGMA integrity_check").fetchone()[0]
+                tables = {r[0] for r in check.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                if integrity != "ok" or not {"products","sales","sale_items","expenses"}.issubset(tables):
+                    raise ValueError("Yeh valid POS backup nahi hai. Existing data unchanged hai.")
+            finally: check.close()
+            safety_copy = self.store.backup()
+            db_path = self.store.db_path
+            self.store.conn.close()
+            try:
+                os.replace(temp_path, db_path)
+                self.store = Store(db_path)
+            except Exception:
+                if os.path.exists(safety_copy): shutil.copy2(safety_copy, db_path)
+                self.store = Store(db_path)
+                raise
+            self.refresh_home()
+            show_message("Backup restore ho gaya. Restore se pehle current database ki safety copy bhi banayi gayi.", "Restore complete")
+        except Exception as exc:
+            try:
+                if os.path.exists(temp_path): os.remove(temp_path)
+            except OSError: pass
+            show_message("Restore failed: " + str(exc) + "\\nExisting database ko preserve kiya gaya.", "Restore error")
+
     def generate_invoice(self, sale_id, customer, phone, items, subtotal, discount, net, paid, due, change=0):
         """Write a lightweight one-page PDF using built-in PDF syntax (no extra package)."""
         folder = os.path.join(self.user_data_dir, "Invoices")
@@ -1025,6 +2031,9 @@ class MaherUmarPOSApp(App):
         for item in items:
             lines.append(f"{item['name']} ({item['category']})")
             lines.append(f"  {item['quantity']} x {money(item['price'])} = {money(item['quantity']*item['price'])}")
+            item_discount = float(item.get("discount_amount", 0) or 0)
+            if item_discount:
+                lines.append(f"  Automatic product discount: -{money(item_discount)}")
         lines += ["-"*48, f"Subtotal: {money(subtotal)}", f"Discount: {money(discount)}", f"FINAL PAYABLE: {money(net)}", f"Amount received: {money(paid)}", f"Change returned: {money(change)}", f"Balance due: {money(due)}", "Thank you for shopping with us!"]
         # Use a standard Helvetica font and escape PDF string literals.
         def esc(value):
