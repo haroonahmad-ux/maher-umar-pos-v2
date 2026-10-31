@@ -1,6 +1,6 @@
 [app]
 
-title = POS v2
+title = BizCore
 
 package.name = maherumarpos
 
@@ -13,7 +13,7 @@ source.dir = .app-source
 
 source.include_exts = py,kv,png,jpg,jpeg,atlas,json,ttf,otf
 
-version = 2.0.3
+version = 2.1.0
 
 # Custom bright mobile-retail POS app icon
 icon.filename = app_icon.png
