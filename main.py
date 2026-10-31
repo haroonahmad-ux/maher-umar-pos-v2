@@ -76,7 +76,7 @@ KV = r'''
     background_color: (0.12, 0.36, 0.88, 1)
     color: (1, 1, 1, 1)
     font_size: '14sp'
-<SignOutIconButton>:
+<SignOutIconButton@Button>:
     canvas.after:
         Color:
             rgba: (1, 1, 1, 1)
@@ -89,7 +89,7 @@ KV = r'''
         Line:
             points: [self.center_x + dp(10), self.center_y, self.center_x + dp(5), self.center_y - dp(5)]
             width: dp(2)
-<SearchIconButton>:
+<SearchIconButton@Button>:
     background_normal: ''
     background_down: ''
     background_color: (0.12, 0.36, 0.88, 1)
