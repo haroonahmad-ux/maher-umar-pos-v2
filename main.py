@@ -2316,7 +2316,7 @@ class MaherUmarPOSApp(App):
                 csv_text = raw.decode("cp1252")
             sample = csv_text[:8192]
             try:
-                dialect = csv.Sniffer().sniff(sample, delimiters=",;\\t")
+                dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
             except csv.Error:
                 dialect = csv.excel
             reader = csv.DictReader(io.StringIO(csv_text, newline=""), dialect=dialect)
@@ -2453,11 +2453,11 @@ class MaherUmarPOSApp(App):
             stock_screen.refresh()
             added_total = int(connection.execute("SELECT COUNT(*) FROM products").fetchone()[0])
             show_message(
-                f"PRODUCTS IMPORTED SUCCESSFULLY\\n\\n"
-                f"New products added: {added}\\n"
-                f"Existing products updated: {updated}\\n"
-                f"Rows processed: {len(parsed)}\\n"
-                f"Total products now in database: {added_total}\\n\\n"
+                f"PRODUCTS IMPORTED SUCCESSFULLY\n\n"
+                f"New products added: {added}\n"
+                f"Existing products updated: {updated}\n"
+                f"Rows processed: {len(parsed)}\n"
+                f"Total products now in database: {added_total}\n\n"
                 f"Stock Management has been refreshed.",
                 "CSV Import Successful"
             )
@@ -2467,8 +2467,8 @@ class MaherUmarPOSApp(App):
                 activity.unbind(on_activity_result=self._on_import_csv_result)
             except Exception:
                 pass
-            show_message("CSV IMPORT FAILED\\n\\n" + str(exc) +
-                         "\\n\\nExisting product data has been preserved.", "CSV import error")
+            show_message("CSV IMPORT FAILED\n\n" + str(exc) +
+                         "\n\nExisting product data has been preserved.", "CSV import error")
 
     def generate_invoice(self, sale_id, customer, phone, items, subtotal, discount, net, paid, due, change=0):
         """Create a PDF invoice and save it to the public Android Downloads folder."""
