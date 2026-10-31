@@ -269,12 +269,12 @@ KV = r'''
                             valign: 'top'
                             text_size: self.size
                     Button:
-                        text: '↪  SIGN OUT'
+                        text: '⇥  SIGN OUT'
                         size_hint: None, None
                         size: dp(104), dp(42)
                         background_normal: ''
                         background_down: ''
-                        background_color: (0.10, 0.58, 0.30, 1)
+                        background_color: (0.78, 0.16, 0.18, 1)
                         color: (1, 1, 1, 1)
                         font_size: '12sp'
                         bold: True
