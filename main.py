@@ -112,6 +112,43 @@ KV = r'''
         Line:
             points: [self.center_x + dp(6), self.center_y - dp(7), self.center_x + dp(15), self.center_y - dp(16)]
             width: dp(3)
+<DashboardSearchButton@Button>:
+    background_normal: ''
+    background_down: ''
+    background_color: (0, 0, 0, 0)
+    color: (0.07, 0.19, 0.23, 1)
+    font_size: '15sp'
+    bold: True
+    halign: 'left'
+    padding: [dp(14), 0, dp(38), 0]
+    canvas.before:
+        Color:
+            rgba: (1, 1, 1, 1)
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [self.height / 2]
+        Color:
+            rgba: (0.07, 0.19, 0.23, 1)
+        Line:
+            rounded_rectangle: (self.x, self.y, self.width, self.height, self.height / 2)
+            width: dp(1.5)
+    canvas.after:
+        Color:
+            rgba: (0.07, 0.19, 0.23, 1)
+        Ellipse:
+            pos: (self.right - dp(31), self.center_y + dp(1))
+            size: (dp(15), dp(15))
+        Color:
+            rgba: (1, 1, 1, 1)
+        Ellipse:
+            pos: (self.right - dp(28), self.center_y + dp(4))
+            size: (dp(9), dp(9))
+        Color:
+            rgba: (0.07, 0.19, 0.23, 1)
+        Line:
+            points: [self.right - dp(18), self.center_y - dp(7), self.right - dp(10), self.center_y - dp(15)]
+            width: dp(3)
 <Field@TextInput>:
     size_hint_y: None
     height: dp(48)
@@ -291,26 +328,26 @@ KV = r'''
                     spacing: dp(8)
                     BoxLayout:
                         orientation: 'vertical'
-                        spacing: dp(1)
+                        spacing: dp(2)
                         Label:
-                            text: '[b]Welcome to BizCore[/b]'
-                            markup: True
-                            font_size: '15sp'
-                            color: (0.07, 0.19, 0.23, 1)
+                            text: 'Welcome to BizCore'
+                            font_size: '12sp'
+                            color: (0.39, 0.47, 0.50, 1)
                             halign: 'left'
                             valign: 'bottom'
                             text_size: self.size
                         Label:
-                            text: '[b]' + root.retailer_name + '[/b]'
-                            markup: True
-                            font_size: '19sp'
-                            color: (0.20, 0.31, 0.35, 1)
+                            text: root.retailer_name
+                            font_size: '22sp'
+                            bold: True
+                            color: (0.07, 0.19, 0.23, 1)
                             halign: 'left'
                             valign: 'top'
                             text_size: self.size
-                    SearchIconButton:
+                    DashboardSearchButton:
+                        text: 'Search...'
                         size_hint: None, None
-                        size: dp(48), dp(48)
+                        size: dp(154), dp(48)
                         on_release: app.open_quick_search()
                     SignOutIconButton:
                         size_hint: None, None
@@ -508,7 +545,7 @@ KV = r'''
                     orientation: 'vertical'
                     size_hint_y: None
                     height: dp(0)
-                SecondaryButton:
+                SuccessButton:
                     text: 'Save Product'
                     on_release: root.add_product()
                 SuccessButton:
@@ -2219,15 +2256,17 @@ class MaherUmarPOSApp(App):
         query.bind(text=render); render(); popup.open()
 
     def import_products_csv(self):
+        """Open Android's document picker and import a CSV into this retailer's local database."""
         try:
             from android import activity
             from jnius import autoclass
             Intent = autoclass("android.content.Intent")
             intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
             intent.addCategory(Intent.CATEGORY_OPENABLE)
-            # Android providers label CSV files inconsistently; validate after picking.
             intent.setType("*/*")
             intent.putExtra(Intent.EXTRA_TITLE, "Select BizCore CSV file")
+            # Persist read permission where the document provider supports it.
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             activity.bind(on_activity_result=self._on_import_csv_result)
             autoclass("org.kivy.android.PythonActivity").mActivity.startActivityForResult(intent, 7413)
         except Exception as exc:
@@ -2235,7 +2274,7 @@ class MaherUmarPOSApp(App):
                 activity.unbind(on_activity_result=self._on_import_csv_result)
             except Exception:
                 pass
-            show_message("CSV picker open nahi ho saka: " + str(exc), "CSV import unavailable")
+            show_message("CSV file picker open nahi ho saka: " + str(exc), "CSV import unavailable")
 
     def _on_import_csv_result(self, request_code, result_code, intent):
         if request_code != 7413:
@@ -2243,113 +2282,183 @@ class MaherUmarPOSApp(App):
         try:
             from android import activity
             from jnius import autoclass, jarray
-            activity.unbind(on_activity_result=self._on_import_csv_result)
+            try:
+                activity.unbind(on_activity_result=self._on_import_csv_result)
+            except Exception:
+                pass
             if result_code != -1 or intent is None or intent.getData() is None:
-                show_message("CSV import cancelled. Existing products unchanged.", "Import cancelled")
+                show_message("CSV import cancel kar diya gaya. Existing products unchanged hain.", "Import cancelled")
                 return
+
             resolver = autoclass("org.kivy.android.PythonActivity").mActivity.getContentResolver()
-            stream = resolver.openInputStream(intent.getData())
+            uri = intent.getData()
+            stream = resolver.openInputStream(uri)
             if stream is None:
-                raise IOError("Selected file read nahi ho saki.")
+                raise IOError("Selected CSV file read nahi ho saki.")
             data = bytearray()
-            buf = jarray("b")([0] * 65536)
+            buffer = jarray("b")([0] * 32768)
             try:
                 while True:
-                    count = stream.read(buf)
-                    if count <= 0:
+                    count = stream.read(buffer)
+                    if count == -1 or count == 0:
                         break
-                    data.extend((int(buf[i]) & 255) for i in range(count))
+                    data.extend((int(buffer[i]) & 255) for i in range(count))
             finally:
                 stream.close()
-            reader = csv.DictReader(io.StringIO(bytes(data).decode("utf-8-sig")))
+            if not data:
+                raise ValueError("Selected CSV file khaali hai.")
+
+            # Support UTF-8/UTF-8 BOM and common Excel-exported Windows CSV files.
+            raw = bytes(data)
+            try:
+                csv_text = raw.decode("utf-8-sig")
+            except UnicodeDecodeError:
+                csv_text = raw.decode("cp1252")
+            sample = csv_text[:8192]
+            try:
+                dialect = csv.Sniffer().sniff(sample, delimiters=",;\\t")
+            except csv.Error:
+                dialect = csv.excel
+            reader = csv.DictReader(io.StringIO(csv_text, newline=""), dialect=dialect)
             if not reader.fieldnames:
                 raise ValueError("CSV header row missing hai.")
+
+            def normalize_header(value):
+                return re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower()).strip("_")
+
             aliases = {
-                "name": ("product_name", "name", "product"),
-                "category": ("category", "product_category"),
-                "cost": ("cost_price", "purchase_price", "cost", "buy_price"),
-                "selling": ("selling_price", "sale_price", "selling", "sell_price"),
-                "qty": ("quantity", "stock", "opening_quantity", "qty"),
+                "name": ("product_name", "name", "product", "item_name", "item"),
+                "category": ("category", "product_category", "item_category"),
+                "cost": ("cost_price", "purchase_price", "cost", "buy_price", "purchase_cost"),
+                "selling": ("selling_price", "sale_price", "selling", "sell_price", "retail_price"),
+                "qty": ("quantity", "stock", "opening_quantity", "qty", "stock_quantity", "opening_stock"),
                 "discount": ("discount_percent", "discount", "discount_percentage"),
                 "expiry": ("discount_expiry", "expiry_date", "expire_date"),
                 "minqty": ("minimum_quantity", "discount_min_qty", "min_quantity")
             }
+            header_map = {}
+            for header in reader.fieldnames:
+                normalized = normalize_header(header)
+                if normalized:
+                    header_map[normalized] = header
+
+            missing = [label for label, key in (("Product Name", "name"), ("Cost Price", "cost"),
+                                                ("Selling Price", "selling"), ("Quantity", "qty"))
+                       if not any(alias in header_map for alias in aliases[key])]
+            if missing:
+                raise ValueError("CSV mein required columns missing hain: " + ", ".join(missing) +
+                                 ". Required headers: Product Name, Category, Cost Price, Selling Price, Quantity.")
+
             parsed = []
             for line, row in enumerate(reader, start=2):
-                values = {
-                    str(k or "").strip().lower().replace(" ", "_"): (v or "").strip()
-                    for k, v in row.items() if k is not None
-                }
+                values = {normalize_header(k): (v or "").strip() for k, v in row.items() if k is not None}
+                if not any(values.values()):
+                    continue
+
                 def get(field, default=""):
-                    return next((values[k] for k in aliases[field] if k in values), default)
+                    for alias in aliases[field]:
+                        if alias in values:
+                            return values[alias]
+                    return default
+
                 name = correct_product_spelling(get("name"))
                 if not name:
-                    raise ValueError(f"CSV row {line}: Product Name missing.")
+                    raise ValueError(f"CSV row {line}: Product Name missing hai.")
                 category = detect_category(name, get("category"))
                 try:
-                    cost = float(get("cost", "0") or 0)
-                    selling = float(get("selling", "0") or 0)
-                    qty_value = float(get("qty", "0") or 0)
-                    pct = float(get("discount", "0") or 0)
+                    cost = float((get("cost", "0") or "0").replace(",", ""))
+                    selling = float((get("selling", "0") or "0").replace(",", ""))
+                    qty_value = float((get("qty", "0") or "0").replace(",", ""))
+                    pct = float((get("discount", "0") or "0").replace("%", "").replace(",", ""))
                 except ValueError:
-                    raise ValueError(f"CSV row {line}: price, quantity ya discount number mein hona chahiye.")
+                    raise ValueError(f"CSV row {line}: price, quantity aur discount numeric values honi chahiye.")
                 if any(v != v or abs(v) == float("inf") for v in (cost, selling, qty_value, pct)):
                     raise ValueError(f"CSV row {line}: invalid numeric value.")
                 if cost < 0 or selling < 0 or qty_value < 0 or not qty_value.is_integer() or pct < 0 or pct >= 100:
-                    raise ValueError(f"CSV row {line}: price, whole-number quantity ya discount invalid.")
-                qty = int(qty_value)
-                start = end = ""
+                    raise ValueError(f"CSV row {line}: price, whole-number quantity ya discount invalid hai.")
+
+                start_date = end_date = ""
                 minqty = 0
                 if pct:
                     digits = "".join(ch for ch in get("expiry") if ch.isdigit())
                     if len(digits) not in (4, 8):
-                        raise ValueError(f"CSV row {line}: discount expiry DD-MM-YYYY ya DDMM format mein dein.")
+                        raise ValueError(f"CSV row {line}: discount expiry DD-MM-YYYY format mein dein.")
                     day, month = int(digits[:2]), int(digits[2:4])
                     year = int(digits[4:8]) if len(digits) == 8 else datetime.now().year
-                    end_date = datetime(year, month, day).date()
-                    if end_date < datetime.now().date():
+                    end_date_obj = datetime(year, month, day).date()
+                    if end_date_obj < datetime.now().date():
                         raise ValueError(f"CSV row {line}: discount expiry past date hai.")
-                    start = datetime.now().strftime("%Y-%m-%d")
-                    end = end_date.strftime("%Y-%m-%d")
-                    minqty = int(float(get("minqty", "0") or 0))
+                    start_date = datetime.now().strftime("%Y-%m-%d")
+                    end_date = end_date_obj.strftime("%Y-%m-%d")
+                    try:
+                        minqty = int(float(get("minqty", "0") or 0))
+                    except ValueError:
+                        raise ValueError(f"CSV row {line}: minimum discount quantity numeric honi chahiye.")
                     if minqty <= 0:
                         raise ValueError(f"CSV row {line}: discounted product ke liye minimum quantity lazmi hai.")
-                parsed.append((name, category, cost, selling, qty, pct, start, end, minqty))
+
+                parsed.append((name, category, cost, selling, int(qty_value), pct,
+                               start_date, end_date, minqty))
+
             if not parsed:
-                raise ValueError("CSV file mein products nahi hain.")
+                raise ValueError("CSV file mein koi valid product row nahi mili.")
             seen = set()
             for row in parsed:
                 key = row[0].casefold()
                 if key in seen:
-                    raise ValueError(f"CSV mein duplicate product name mila: {row[0]}. Koi data import nahi hua.")
+                    raise ValueError(f"CSV mein duplicate product name mila: {row[0]}. Import cancel kar diya gaya.")
                 seen.add(key)
+
             added = updated = 0
             now = datetime.now().isoformat(timespec="seconds")
-            # Re-importing the same stock sheet updates matching products, not duplicate rows.
-            with self.store.conn:
+            # Use an explicit transaction and verify persisted rows before reporting success.
+            connection = self.store.conn
+            try:
+                connection.execute("BEGIN IMMEDIATE")
                 for row in parsed:
-                    existing = self.store.conn.execute(
-                        "SELECT id FROM products WHERE LOWER(name)=LOWER(?)", (row[0],)
+                    existing = connection.execute(
+                        "SELECT id FROM products WHERE name = ? COLLATE NOCASE LIMIT 1", (row[0],)
                     ).fetchone()
                     if existing:
-                        self.store.conn.execute(
+                        connection.execute(
                             "UPDATE products SET category=?, purchase_price=?, sale_price=?, stock=?, "
                             "discount_percent=?, discount_start_date=?, discount_end_date=?, discount_min_qty=? WHERE id=?",
-                            (row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], existing[0])
+                            (row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], existing["id"])
                         )
                         updated += 1
                     else:
-                        self.store.conn.execute(
-                            "INSERT INTO products(name,category,purchase_price,sale_price,stock,created_at,discount_percent,discount_start_date,discount_end_date,discount_min_qty) "
+                        connection.execute(
+                            "INSERT INTO products(name,category,purchase_price,sale_price,stock,created_at,"
+                            "discount_percent,discount_start_date,discount_end_date,discount_min_qty) "
                             "VALUES(?,?,?,?,?,?,?,?,?,?)",
                             (row[0], row[1], row[2], row[3], row[4], now, row[5], row[6], row[7], row[8])
                         )
                         added += 1
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+
+            persisted = connection.execute(
+                "SELECT COUNT(*) FROM products WHERE name IN (" +
+                ",".join("?" for _ in parsed) + ") COLLATE NOCASE",
+                tuple(row[0] for row in parsed)
+            ).fetchone()[0]
+            if int(persisted) != len(parsed):
+                raise RuntimeError(f"Database verification failed: {persisted}/{len(parsed)} products found after commit.")
+
+            # Refresh the dashboard and the stock screen from the committed database.
             self.refresh_home()
-            self.root.get_screen("stock").refresh()
+            stock_screen = self.root.get_screen("stock")
+            stock_screen.refresh()
+            added_total = int(connection.execute("SELECT COUNT(*) FROM products").fetchone()[0])
             show_message(
-                f"CSV import complete. Added: {added} products. Updated: {updated} products. "
-                f"Total processed: {len(parsed)}. Stock Management refreshed successfully.",
+                f"PRODUCTS IMPORTED SUCCESSFULLY\\n\\n"
+                f"New products added: {added}\\n"
+                f"Existing products updated: {updated}\\n"
+                f"Rows processed: {len(parsed)}\\n"
+                f"Total products now in database: {added_total}\\n\\n"
+                f"Stock Management has been refreshed.",
                 "CSV Import Successful"
             )
         except Exception as exc:
@@ -2358,7 +2467,8 @@ class MaherUmarPOSApp(App):
                 activity.unbind(on_activity_result=self._on_import_csv_result)
             except Exception:
                 pass
-            show_message("CSV import failed: " + str(exc) + "\nNo partial import was kept.", "CSV import error")
+            show_message("CSV IMPORT FAILED\\n\\n" + str(exc) +
+                         "\\n\\nExisting product data has been preserved.", "CSV import error")
 
     def generate_invoice(self, sale_id, customer, phone, items, subtotal, discount, net, paid, due, change=0):
         """Create a PDF invoice and save it to the public Android Downloads folder."""
