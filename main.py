@@ -2439,12 +2439,14 @@ class MaherUmarPOSApp(App):
                 connection.rollback()
                 raise
 
-            persisted = connection.execute(
-                "SELECT COUNT(*) FROM products WHERE name IN (" +
-                ",".join("?" for _ in parsed) + ") COLLATE NOCASE",
-                tuple(row[0] for row in parsed)
-            ).fetchone()[0]
-            if int(persisted) != len(parsed):
+            persisted = 0
+            for row in parsed:
+                found = connection.execute(
+                    "SELECT 1 FROM products WHERE name = ? COLLATE NOCASE LIMIT 1", (row[0],)
+                ).fetchone()
+                if found:
+                    persisted += 1
+            if persisted != len(parsed):
                 raise RuntimeError(f"Database verification failed: {persisted}/{len(parsed)} products found after commit.")
 
             # Refresh the dashboard and the stock screen from the committed database.
