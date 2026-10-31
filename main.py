@@ -1929,10 +1929,8 @@ class MaherUmarPOSApp(App):
             raise ValueError("Secure connection to Supabase could not be established: " + detail[:220] + ". Check internet/date-time and try again.") from exc
 
     def supabase_request_otp(self, email, purpose, name=""):
-        payload = {"email": email, "create_user": purpose == "signup"}
-        if purpose == "signup":
-            payload["data"] = {"account_type": "retailer", "customer_name": name}
-        return self._supabase_auth_request("/auth/v1/otp", payload)
+        payload = {"email": email, "purpose": purpose, "customer_name": name}
+        return self._supabase_auth_request("/functions/v1/bizcore-email-auth", payload)
 
     def supabase_verify_otp(self, email, token, purpose="login"):
         return self._supabase_auth_request("/auth/v1/verify",
