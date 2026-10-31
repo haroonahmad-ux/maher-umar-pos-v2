@@ -6,7 +6,6 @@ const cors = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Content-Type": "application/json",
 };
-
 function reply(status: number, body: Record<string, unknown>) {
   return new Response(JSON.stringify(body), { status, headers: cors });
 }
@@ -15,17 +14,16 @@ async function sha256(value: string) {
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return [...new Uint8Array(digest)].map(x => x.toString(16).padStart(2, "0")).join("");
 }
-async function emailExists(admin: ReturnType<typeof createClient>, email: string) {
+async function emailExists(admin: any, email: string): Promise<boolean> {
   for (let page = 1; page <= 100; page++) {
     const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 1000 });
     if (error) throw new Error("Account lookup is temporarily unavailable.");
     const users = data.users || [];
-    if (users.some(user => String(user.email || "").toLowerCase() === email)) return true;
+    if (users.some((user: any) => String(user.email || "").toLowerCase() === email)) return true;
     if (users.length < 1000) return false;
   }
   throw new Error("Account directory is too large for this lookup. Contact support.");
 }
-
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return reply(405, { error: "Method not allowed" });
@@ -42,33 +40,21 @@ Deno.serve(async (req: Request) => {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return reply(400, { error: "Enter a valid email address." });
     if (!["signup", "login"].includes(purpose)) return reply(400, { error: "Invalid account action." });
     if (purpose === "signup" && (name.length < 2 || name.length > 60)) return reply(400, { error: "Retailer name must be 2–60 characters." });
-
     const ip = req.headers.get("cf-connecting-ip") || req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
     const ipHash = await sha256(ip + ":" + url);
     const since = new Date(Date.now() - 15 * 60 * 1000).toISOString();
-    const { count, error: countError } = await admin.from("retailer_auth_attempts")
-      .select("id", { count: "exact", head: true }).eq("ip_hash", ipHash).gte("created_at", since);
+    const { count, error: countError } = await admin.from("retailer_auth_attempts").select("id", { count: "exact", head: true }).eq("ip_hash", ipHash).gte("created_at", since);
     if (countError) throw new Error("Request protection is temporarily unavailable.");
     if ((count || 0) >= 20) return reply(429, { error: "Too many email verification requests. Please try again later." });
     const { error: logError } = await admin.from("retailer_auth_attempts").insert({ ip_hash: ipHash });
     if (logError) throw new Error("Request protection is temporarily unavailable.");
-
     const exists = await emailExists(admin, email);
-    if (purpose === "signup" && exists) {
-      return reply(409, { error: "LOGIN_TO_EXISTING_ACCOUNT: This email is already registered. Login to Existing Account." });
-    }
-    if (purpose === "login" && !exists) {
-      return reply(404, { error: "No account exists for this email. Please Create Account first." });
-    }
-
+    if (purpose === "signup" && exists) return reply(409, { error: "LOGIN_TO_EXISTING_ACCOUNT: This email is already registered. Login to Existing Account." });
+    if (purpose === "login" && !exists) return reply(404, { error: "No account exists for this email. Please Create Account first." });
     const authResponse = await fetch(url + "/auth/v1/otp", {
       method: "POST",
       headers: { "apikey": anonKey, "Authorization": "Bearer " + anonKey, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email,
-        create_user: purpose === "signup",
-        ...(purpose === "signup" ? { data: { account_type: "retailer", customer_name: name } } : {}),
-      }),
+      body: JSON.stringify({ email, create_user: purpose === "signup", ...(purpose === "signup" ? { data: { account_type: "retailer", customer_name: name } } : {}) }),
     });
     const responseText = await authResponse.text();
     let responseBody: Record<string, unknown> = {};
