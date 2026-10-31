@@ -236,7 +236,7 @@ KV = r'''
                         allow_stretch: True
                         keep_ratio: True
                     Label:
-                        text: '[b]MAHER UMAR MOBILE & COMMUNICATION[/b]\\n[size=13sp]Your store, in control[/size]'
+                        text: '[b]MAHER UMAR MOBILE & COMMUNICATION[/b]\n[size=13sp]Your store, in control[/size]'
                         markup: True
                         font_size: '21sp'
                         color: (0.07, 0.19, 0.23, 1)
@@ -1108,6 +1108,7 @@ class AuthScreen(Screen):
     busy = BooleanProperty(False)
     _pending_email = ""
     _pending_name = ""
+    _pending_mode = ""
 
     def set_mode(self, mode):
         if mode not in ("signup", "login"):
@@ -1139,6 +1140,7 @@ class AuthScreen(Screen):
             app.supabase_request_otp(email, self.mode, name)
             self._pending_email = email
             self._pending_name = name
+            self._pending_mode = self.mode
             self.otp_sent = True
             self.ids.otp.text = ""
             self.status_text = "If the address is eligible, a 6-digit code has been sent. Check Inbox and Spam."
@@ -1157,7 +1159,7 @@ class AuthScreen(Screen):
         self.status_text = "Verifying your email code…"
         try:
             app = App.get_running_app()
-            session = app.supabase_verify_otp(self._pending_email, code)
+            session = app.supabase_verify_otp(self._pending_email, code, self._pending_mode)
             user = session.get("user") or {}
             uid = str(user.get("id") or "")
             if not uid:
@@ -1852,9 +1854,9 @@ class MaherUmarPOSApp(App):
             payload["data"] = {"account_type": "retailer", "customer_name": name}
         return self._supabase_auth_request("/auth/v1/otp", payload)
 
-    def supabase_verify_otp(self, email, token):
+    def supabase_verify_otp(self, email, token, purpose="login"):
         return self._supabase_auth_request("/auth/v1/verify",
-                                           {"email": email, "token": token, "type": "email"})
+                                           {"email": email, "token": token, "type": "signup" if purpose == "signup" else "email"})
 
     def _account_db_path(self, uid):
         safe_id = hashlib.sha256(str(uid).encode("utf-8")).hexdigest()[:24]
