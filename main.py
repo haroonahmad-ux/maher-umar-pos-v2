@@ -1438,14 +1438,17 @@ class StockScreen(Screen):
                             input_filter="float", multiline=False, size_hint_y=None, height=dp(54),
                             background_normal="", background_active="", background_color=(0.94,0.97,0.99,1),
                             padding=[dp(12),dp(14),dp(12),dp(10)], font_size="16sp")
-        body.add_widget(cost); body.add_widget(selling)
+        body.add_widget(Label(text="COST PRICE",size_hint_y=None,height=dp(20),color=(0.18,0.27,0.30,1),font_size="12sp",bold=True))
+        body.add_widget(cost)
+        body.add_widget(Label(text="SELLING PRICE",size_hint_y=None,height=dp(20),color=(0.18,0.27,0.30,1),font_size="12sp",bold=True))
+        body.add_widget(selling)
         body.add_widget(Label(text="Only future sales use these prices. Past sale records remain unchanged.",
                               size_hint_y=None, height=dp(42), color=(0.35,0.43,0.46,1), font_size="12sp"))
         row = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(8))
-        cancel = Button(text="Cancel", background_normal="", background_color=(0.88,0.94,0.95,1), color=(0.07,0.26,0.31,1))
+        cancel = Button(text="Cancel", background_normal="", background_color=(0.12,0.36,0.88,1), color=(1,1,1,1))
         save = Button(text="Save prices", background_normal="", background_color=(0.055,0.34,0.42,1), color=(1,1,1,1), bold=True)
         row.add_widget(cancel); row.add_widget(save); body.add_widget(row)
-        popup = Popup(title="Update product prices", content=body, size_hint=(0.92,None), height=dp(310),
+        popup = Popup(title="Update Product Prices", content=body, size_hint=(0.92,None), height=dp(350),
                       auto_dismiss=False, background_color=(1,1,1,1),
                       title_color=(0.08,0.16,0.18,1), separator_color=(0.08,0.52,0.30,1))
         cancel.bind(on_release=popup.dismiss)
@@ -1475,7 +1478,7 @@ class StockScreen(Screen):
             hint_text="Discount percentage (e.g. 10)",
             input_filter="float", multiline=False, size_hint_y=None, height=dp(46)
         )
-        expiry = TextInput(
+        expiry = ExpiryDateInput(
             text=datetime.strptime(product["discount_end_date"], "%Y-%m-%d").strftime("%d%m")
                  if active and product["discount_end_date"] else "",
             hint_text="Expiry date (DD-MM-YYYY)",
@@ -1494,7 +1497,7 @@ class StockScreen(Screen):
             size_hint_y=None, height=dp(42), color=(0.35, 0.43, 0.46, 1), font_size="12sp"
         ))
         buttons = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(6))
-        cancel = Button(text="Cancel", background_normal="", background_color=(0.88,0.94,0.95,1), color=(0.07,0.26,0.31,1))
+        cancel = Button(text="Cancel", background_normal="", background_color=(0.12,0.36,0.88,1), color=(1,1,1,1))
         save = Button(text="Save discount", background_normal="", background_color=(0.055,0.34,0.42,1), color=(1,1,1,1), bold=True)
         buttons.add_widget(cancel); buttons.add_widget(save); body.add_widget(buttons)
         popup = Popup(title="Product discount", content=body, size_hint=(0.92,None), height=dp(370),
@@ -1702,7 +1705,7 @@ class SaleScreen(Screen):
                     separator_color=(0.08, 0.52, 0.30, 1), title_size="18sp")
         sc = ScrollView(); items = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(6)); items.bind(minimum_height=items.setter("height"))
         for row in matches:
-            btn = Button(text=f"{row['name']} • {row['category']} • {money(row['sale_price'])} • Stock {row['stock']}", size_hint_y=None, height=dp(50), background_normal="", background_color=(0.88,0.94,0.95,1), color=(0.07,0.26,0.31,1))
+            btn = Button(text=f"{row['name']} • {row['category']} • {money(row['sale_price'])} • Stock {row['stock']}", size_hint_y=None, height=dp(50), background_normal="", background_color=(0.12,0.36,0.88,1), color=(1,1,1,1))
             btn.bind(on_release=lambda instance, p=dict(row): (pop.dismiss(), self._add_matched(p, qty)))
             items.add_widget(btn)
         sc.add_widget(items); box.add_widget(sc); pop.open()
@@ -1767,7 +1770,7 @@ class SaleScreen(Screen):
         note = Label(text="Due amount will be saved in Udhaar Book if payment is partial.", size_hint_y=None, height=dp(35), color=(0.22,0.29,0.31,1), font_size="13sp")
         body.add_widget(note)
         row = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(8))
-        cancel = Button(text="Cancel", background_normal="", background_color=(0.88,0.94,0.95,1), color=(0.07,0.26,0.31,1))
+        cancel = Button(text="Cancel", background_normal="", background_color=(0.12,0.36,0.88,1), color=(1,1,1,1))
         confirm = Button(text="Confirm Sale", background_normal="", background_color=(0.055,0.34,0.42,1), color=(1,1,1,1), bold=True)
         row.add_widget(cancel); row.add_widget(confirm); body.add_widget(row)
         pop = Popup(title="Checkout & Payment", content=body, size_hint=(0.92,None), height=dp(340), auto_dismiss=False,
