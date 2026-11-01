@@ -2111,42 +2111,99 @@ class MaherUmarPOSApp(App):
             path = self.store.backup(); show_message(f"Database backup created successfully:\n{path}\n\nKeep a copy outside the app as well.", "Backup complete")
         except Exception as exc: show_message(f"Backup failed: {exc}", "Backup error")
     def export_database_backup(self):
+        """Create and verify the backup before opening Android's save picker."""
+        backup_path = None
         try:
+            backup_path = self.create_portable_backup()
+            self._pending_backup_export = backup_path
             from android import activity
             from jnius import autoclass
             Intent = autoclass("android.content.Intent")
             intent = Intent(Intent.ACTION_CREATE_DOCUMENT)
             intent.addCategory(Intent.CATEGORY_OPENABLE)
             intent.setType("application/octet-stream")
+            intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             intent.putExtra(Intent.EXTRA_TITLE, "BizCore_Backup_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".bizcore")
             activity.bind(on_activity_result=self._on_export_backup_result)
             autoclass("org.kivy.android.PythonActivity").mActivity.startActivityForResult(intent, 7411)
         except Exception as exc:
-            show_message("Export start nahi ho saka: " + str(exc), "Export unavailable")
+            self._pending_backup_export = None
+            if backup_path and os.path.exists(backup_path):
+                try: os.remove(backup_path)
+                except OSError: pass
+            show_message("Backup export start nahi ho saka: " + str(exc), "Export unavailable")
 
     def _on_export_backup_result(self, request_code, result_code, intent):
-        if request_code != 7411: return
+        if request_code != 7411:
+            return
+        backup_path = getattr(self, "_pending_backup_export", None)
+        self._pending_backup_export = None
+        uri = None
         try:
             from android import activity
             from jnius import autoclass, jarray
             activity.unbind(on_activity_result=self._on_export_backup_result)
-            if result_code != -1 or intent is None:
-                show_message("Backup export cancel kar diya gaya.", "Export cancelled"); return
-            backup_path = self.create_portable_backup()
+            if result_code != -1 or intent is None or intent.getData() is None:
+                show_message("Backup export cancel kar diya gaya.", "Export cancelled")
+                return
+            if not backup_path or not os.path.isfile(backup_path) or os.path.getsize(backup_path) <= 0:
+                raise IOError("Verified backup file missing hai ya khaali hai.")
+            uri = intent.getData()
             resolver = autoclass("org.kivy.android.PythonActivity").mActivity.getContentResolver()
-            output = resolver.openOutputStream(intent.getData())
-            if output is None: raise IOError("Selected destination open nahi ho saki.")
+            output = resolver.openOutputStream(uri, "w")
+            if output is None:
+                raise IOError("Selected destination write ke liye open nahi hui.")
+            written = 0
             try:
                 with open(backup_path, "rb") as source:
                     while True:
                         chunk = source.read(65536)
-                        if not chunk: break
-                        output.write(jarray("b")([b if b < 128 else b - 256 for b in chunk]))
+                        if not chunk:
+                            break
+                        signed = jarray("b")([b if b < 128 else b - 256 for b in chunk])
+                        output.write(signed)
+                        written += len(chunk)
                 output.flush()
-            finally: output.close()
-            show_message("Backup selected folder mein export ho gaya.", "Backup exported")
+            finally:
+                output.close()
+            if written <= 0:
+                raise IOError("Backup destination mein koi bytes write nahi huay.")
+            # Verify the final SAF document, not merely the temporary source file.
+            OpenableColumns = autoclass("android.provider.OpenableColumns")
+            projection = jarray("java.lang.String")([OpenableColumns.SIZE])
+            cursor = resolver.query(uri, projection, None, None, None)
+            final_size = -1
+            if cursor is not None:
+                try:
+                    if cursor.moveToFirst():
+                        index = cursor.getColumnIndex(OpenableColumns.SIZE)
+                        if index >= 0 and not cursor.isNull(index):
+                            final_size = int(cursor.getLong(index))
+                finally:
+                    cursor.close()
+            if final_size <= 0:
+                raise IOError("Android ne saved backup ka non-zero file size verify nahi kiya. Export ko successful nahi maana gaya.")
+            if final_size != written:
+                raise IOError(f"Backup size mismatch: wrote {written} bytes, destination reports {final_size} bytes.")
+            show_message(f"Backup successfully export aur verify ho gaya.\nFile size: {final_size:,} bytes\n\nAapka complete business database included hai.", "Backup exported")
         except Exception as exc:
-            show_message("Backup export failed: " + str(exc), "Export error")
+            if uri is not None:
+                try:
+                    resolver = autoclass("org.kivy.android.PythonActivity").mActivity.getContentResolver()
+                    resolver.delete(uri, None, None)
+                except Exception:
+                    pass
+            try:
+                from android import activity
+                activity.unbind(on_activity_result=self._on_export_backup_result)
+            except Exception:
+                pass
+            show_message("Backup export failed: " + str(exc) + "\nZero-byte ya invalid backup ko save nahi rehne diya gaya.", "Export error")
+        finally:
+            if backup_path and os.path.exists(backup_path):
+                try: os.remove(backup_path)
+                except OSError: pass
 
     def import_database_backup(self):
         try:
@@ -2156,81 +2213,218 @@ class MaherUmarPOSApp(App):
             intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
             intent.addCategory(Intent.CATEGORY_OPENABLE)
             intent.setType("*/*")
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
             activity.bind(on_activity_result=self._on_import_backup_result)
             autoclass("org.kivy.android.PythonActivity").mActivity.startActivityForResult(intent, 7412)
         except Exception as exc:
+            try:
+                from android import activity
+                activity.unbind(on_activity_result=self._on_import_backup_result)
+            except Exception:
+                pass
             show_message("Import start nahi ho saka: " + str(exc), "Import unavailable")
 
     def _on_import_backup_result(self, request_code, result_code, intent):
-        if request_code != 7412: return
+        if request_code != 7412:
+            return
         temp_path = self.store.db_path + ".restore.tmp"
+        extracted_path = temp_path + ".sqlite"
+        store_closed = False
+        safety_copy = None
         try:
             from android import activity
             from jnius import autoclass, jarray
             activity.unbind(on_activity_result=self._on_import_backup_result)
-            if result_code != -1 or intent is None:
-                show_message("Restore cancel kar diya gaya. Existing data safe hai.", "Restore cancelled"); return
+            if result_code != -1 or intent is None or intent.getData() is None:
+                show_message("Restore cancel kar diya gaya. Existing data safe hai.", "Restore cancelled")
+                return
             resolver = autoclass("org.kivy.android.PythonActivity").mActivity.getContentResolver()
-            stream = resolver.openInputStream(intent.getData())
-            if stream is None: raise IOError("Selected file read nahi ho saki.")
+            uri = intent.getData()
             try:
-                buf = jarray("b")([0] * 65536)
+                resolver.takePersistableUriPermission(uri, autoclass("android.content.Intent").FLAG_GRANT_READ_URI_PERMISSION)
+            except Exception:
+                pass
+            stream = resolver.openInputStream(uri)
+            if stream is None:
+                raise IOError("Selected backup file read nahi ho saki.")
+            total_bytes = 0
+            buffer = jarray("b")([0] * 65536)
+            try:
                 with open(temp_path, "wb") as target:
                     while True:
-                        count = stream.read(buf)
-                        if count <= 0: break
-                        target.write(bytes((int(buf[i]) & 255) for i in range(count)))
-            finally: stream.close()
+                        count = stream.read(buffer)
+                        if count <= 0:
+                            break
+                        target.write(bytes((int(buffer[i]) & 255) for i in range(count)))
+                        total_bytes += count
+            finally:
+                stream.close()
+            if total_bytes <= 0 or not os.path.isfile(temp_path) or os.path.getsize(temp_path) <= 0:
+                raise ValueError("Selected backup file 0 B / empty hai. Is file se data restore nahi ho sakta.")
             candidate = temp_path
-            extracted_path = temp_path + ".sqlite"
+            manifest = {}
             if zipfile.is_zipfile(temp_path):
-                with zipfile.ZipFile(temp_path,"r") as archive:
-                    if not {"manifest.json","database.sqlite3"}.issubset(set(archive.namelist())): raise ValueError("BizCore backup archive incomplete hai.")
-                    manifest=json.loads(archive.read("manifest.json").decode("utf-8"))
-                    if manifest.get("format")!="bizcore-backup-v1": raise ValueError("Backup format supported nahi hai.")
-                    payload=archive.read("database.sqlite3")
-                    if hashlib.sha256(payload).hexdigest()!=manifest.get("sha256"): raise ValueError("Backup checksum mismatch: file damaged ho sakti hai.")
-                    backup_uid=str(manifest.get("retailer_uid") or ""); current_uid=str((self.current_retailer or {}).get("uid") or "")
-                    if backup_uid and current_uid and backup_uid!=current_uid: raise ValueError("Yeh backup kisi doosray retailer account ka hai. Correct email se login karein.")
-                    with open(extracted_path,"wb") as restored: restored.write(payload)
-                    candidate=extracted_path
+                with zipfile.ZipFile(temp_path, "r") as archive:
+                    names = [n for n in archive.namelist() if not n.endswith("/")]
+                    if "manifest.json" in names:
+                        manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+                        fmt = manifest.get("format")
+                        if fmt not in ("bizcore-backup-v1", "bizcore-backup-v2"):
+                            raise ValueError("Backup version supported nahi hai: " + str(fmt))
+                    database_member = next((n for n in ("database.sqlite3", "database.db", "backup.db", "maher_umar_pos.db") if n in names), None)
+                    if database_member is None:
+                        database_member = next((n for n in names if n.lower().endswith((".db", ".sqlite", ".sqlite3"))), None)
+                    if database_member is None:
+                        raise ValueError("Backup archive ke andar SQLite database nahi mili.")
+                    payload = archive.read(database_member)
+                    if not payload:
+                        raise ValueError("Backup archive mein database file empty hai.")
+                    expected_hash = manifest.get("sha256")
+                    if expected_hash and hashlib.sha256(payload).hexdigest() != expected_hash:
+                        raise ValueError("Backup checksum mismatch: file damaged ya incomplete ho sakti hai.")
+                    backup_uid = str(manifest.get("retailer_uid") or "")
+                    current_uid = str((self.current_retailer or {}).get("uid") or "")
+                    if backup_uid and current_uid and backup_uid != current_uid:
+                        raise ValueError("Yeh backup kisi doosray retailer account ka hai. Correct retailer account se login karein.")
+                    with open(extracted_path, "wb") as restored:
+                        restored.write(payload)
+                    candidate = extracted_path
+            else:
+                with open(temp_path, "rb") as source:
+                    signature = source.read(16)
+                if signature != b"SQLite format 3\x00":
+                    raise ValueError("File na valid BizCore ZIP backup hai aur na SQLite .db backup.")
+            if os.path.getsize(candidate) <= 0:
+                raise ValueError("Backup database empty hai.")
             check = sqlite3.connect(candidate)
             try:
                 integrity = check.execute("PRAGMA integrity_check").fetchone()[0]
                 tables = {r[0] for r in check.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-                if integrity != "ok" or not {"products","sales","sale_items","expenses"}.issubset(tables): raise ValueError("Yeh valid BizCore backup nahi hai. Existing data unchanged hai.")
-            finally: check.close()
+                if integrity != "ok" or "products" not in tables:
+                    raise ValueError("Backup SQLite integrity ya products table validation pass nahi kar saka.")
+                product_columns = {r[1] for r in check.execute("PRAGMA table_info(products)")}
+                if "name" not in product_columns:
+                    raise ValueError("Old backup ka products schema compatible nahi. Existing data unchanged hai.")
+            finally:
+                check.close()
+            # Run additive Store migrations against the temporary database before touching live data.
+            migrated_store = Store(candidate)
+            try:
+                migrated_store.conn.execute("PRAGMA integrity_check").fetchone()
+                restored_counts = {
+                    "products": migrated_store.conn.execute("SELECT COUNT(*) FROM products").fetchone()[0],
+                    "sales": migrated_store.conn.execute("SELECT COUNT(*) FROM sales").fetchone()[0],
+                    "sale_items": migrated_store.conn.execute("SELECT COUNT(*) FROM sale_items").fetchone()[0],
+                    "expenses": migrated_store.conn.execute("SELECT COUNT(*) FROM expenses").fetchone()[0],
+                }
+            finally:
+                migrated_store.conn.close()
+            if restored_counts["products"] <= 0:
+                raise ValueError("Backup mein koi product/inventory record nahi mila. Existing database unchanged hai.")
             safety_copy = self.store.backup()
             db_path = self.store.db_path
             self.store.conn.close()
-            try:
-                os.replace(candidate, db_path)
-                self.store = Store(db_path)
-            except Exception:
-                if os.path.exists(safety_copy): shutil.copy2(safety_copy, db_path)
-                self.store = Store(db_path)
-                raise
+            store_closed = True
+            for suffix in ("-wal", "-shm"):
+                sidecar = db_path + suffix
+                if os.path.exists(sidecar):
+                    os.remove(sidecar)
+            os.replace(candidate, db_path)
+            self.store = Store(db_path)
+            store_closed = False
             self.refresh_home()
-            if candidate != temp_path and os.path.exists(temp_path): os.remove(temp_path)
-            show_message("Backup restore ho gaya. Restore se pehle current database ki safety copy bhi banayi gayi.", "Restore complete")
+            for screen_name in ("stock", "reports", "history", "udhaar", "expenses"):
+                try:
+                    screen = self.root.get_screen(screen_name)
+                    if hasattr(screen, "refresh"):
+                        screen.refresh()
+                except Exception:
+                    pass
+            details = "\n".join(f"{key.replace('_', ' ').title()}: {value:,}" for key, value in restored_counts.items())
+            show_message("Backup successfully restored and database migrated/verified.\n\n" + details + "\n\nCurrent database ki safety copy restore se pehle bana di gayi thi.", "Restore complete")
         except Exception as exc:
-            try:
-                if os.path.exists(temp_path): os.remove(temp_path)
-                if os.path.exists(temp_path + ".sqlite"): os.remove(temp_path + ".sqlite")
-            except OSError: pass
-            show_message("Restore failed: " + str(exc) + "\\nExisting database ko preserve kiya gaya.", "Restore error")
+            if store_closed:
+                try:
+                    if safety_copy and os.path.isfile(safety_copy):
+                        shutil.copy2(safety_copy, self.store.db_path)
+                    self.store = Store(self.store.db_path)
+                    store_closed = False
+                except Exception as recovery_error:
+                    show_message("Restore failed: " + str(exc) + "\nAutomatic recovery also failed: " + str(recovery_error) + "\nSafety backup: " + str(safety_copy), "Restore recovery error")
+                    return
+            show_message("Restore failed: " + str(exc) + "\nExisting database ko preserve kiya gaya.", "Restore error")
+        finally:
+            for path in (temp_path, extracted_path):
+                try:
+                    if os.path.exists(path):
+                        os.remove(path)
+                except OSError:
+                    pass
 
     def create_portable_backup(self):
         raw_path = self.store.backup()
         archive_path = os.path.join(self.user_data_dir, "BizCore_Backup_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".bizcore")
-        with open(raw_path, "rb") as source: payload = source.read()
-        manifest = {"format":"bizcore-backup-v1","app":"BizCore","retailer_uid":str((self.current_retailer or {}).get("uid") or ""),"retailer_email":str((self.current_retailer or {}).get("email") or ""),"created_at":datetime.now().isoformat(timespec="seconds"),"sha256":hashlib.sha256(payload).hexdigest()}
-        with zipfile.ZipFile(archive_path,"w",compression=zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr("manifest.json",json.dumps(manifest,indent=2))
-            archive.writestr("database.sqlite3",payload)
-        try: os.remove(raw_path)
-        except OSError: pass
-        return archive_path
+        try:
+            if not os.path.isfile(raw_path) or os.path.getsize(raw_path) <= 0:
+                raise IOError("SQLite backup create nahi hui ya empty hai.")
+            database = sqlite3.connect(raw_path)
+            try:
+                integrity = database.execute("PRAGMA integrity_check").fetchone()[0]
+                if integrity != "ok":
+                    raise ValueError("Source database integrity check failed: " + str(integrity))
+                tables = {r[0] for r in database.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                if "products" not in tables:
+                    raise ValueError("Source database mein products table missing hai.")
+                counts = {}
+                for table in ("products", "sales", "sale_items", "expenses"):
+                    counts[table] = database.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] if table in tables else 0
+                schema_version = int(database.execute("PRAGMA user_version").fetchone()[0])
+            finally:
+                database.close()
+            with open(raw_path, "rb") as source:
+                payload = source.read()
+            manifest = {
+                "format": "bizcore-backup-v2",
+                "app": "BizCore",
+                "schema_version": schema_version,
+                "retailer_uid": str((self.current_retailer or {}).get("uid") or ""),
+                "retailer_email": str((self.current_retailer or {}).get("email") or ""),
+                "created_at": datetime.now().isoformat(timespec="seconds"),
+                "database_bytes": len(payload),
+                "record_counts": counts,
+                "sha256": hashlib.sha256(payload).hexdigest()
+            }
+            with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("manifest.json", json.dumps(manifest, indent=2))
+                archive.writestr("database.sqlite3", payload)
+            if not os.path.isfile(archive_path) or os.path.getsize(archive_path) <= 0 or not zipfile.is_zipfile(archive_path):
+                raise IOError("Portable backup archive verify nahi ho saki.")
+            with zipfile.ZipFile(archive_path, "r") as archive:
+                if set(("manifest.json", "database.sqlite3")) - set(archive.namelist()):
+                    raise IOError("Portable backup archive incomplete hai.")
+                verified = archive.read("database.sqlite3")
+                check = sqlite3.connect(":memory:")
+                try:
+                    check.deserialize(verified)
+                    if check.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                        raise IOError("Portable backup database verification failed.")
+                finally:
+                    check.close()
+            return archive_path
+        except Exception:
+            try:
+                if os.path.exists(archive_path):
+                    os.remove(archive_path)
+            except OSError:
+                pass
+            raise
+        finally:
+            try:
+                if os.path.exists(raw_path):
+                    os.remove(raw_path)
+            except OSError:
+                pass
 
     def open_quick_search(self):
         products=list(self.store.products(order="name"))
@@ -2265,8 +2459,8 @@ class MaherUmarPOSApp(App):
             intent.addCategory(Intent.CATEGORY_OPENABLE)
             intent.setType("*/*")
             intent.putExtra(Intent.EXTRA_TITLE, "Select BizCore CSV file")
-            # Persist read permission where the document provider supports it.
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
             activity.bind(on_activity_result=self._on_import_csv_result)
             autoclass("org.kivy.android.PythonActivity").mActivity.startActivityForResult(intent, 7413)
         except Exception as exc:
