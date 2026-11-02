@@ -20,8 +20,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  detect-changes:
+    name: Anti-loop change detection
+    uses: ./.github/workflows/build-guard.yml
+    permissions:
+      contents: read
+
   build:
     name: Build Android APK
+    needs: detect-changes
+    if: needs.detect-changes.outputs.has_changes == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
 
@@ -46,29 +54,29 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            git \
-            zip \
-            unzip \
-            autoconf \
-            automake \
-            libtool \
-            pkg-config \
-            cmake \
-            build-essential \
-            libffi-dev \
-            libssl-dev \
-            zlib1g-dev \
-            libncurses-dev \
-            libtinfo6 \
-            libltdl-dev \
-            gettext \
+          sudo apt-get install -y \\
+            git \\
+            zip \\
+            unzip \\
+            autoconf \\
+            automake \\
+            libtool \\
+            pkg-config \\
+            cmake \\
+            build-essential \\
+            libffi-dev \\
+            libssl-dev \\
+            zlib1g-dev \\
+            libncurses-dev \\
+            libtinfo6 \\
+            libltdl-dev \\
+            gettext \\
             ccache
 
       - name: Install current Buildozer
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          python -m pip install \
+          python -m pip install \\
             "git+https://github.com/kivy/buildozer.git"
 
       - name: Verify build configuration and Python syntax
@@ -116,3 +124,12 @@ jobs:
           path: bin/*.apk
           if-no-files-found: warn
           retention-days: 14
+
+  skipped:
+    name: Report unchanged commit
+    needs: detect-changes
+    if: needs.detect-changes.outputs.has_changes != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain build skip
+        run: echo "No file changes detected in this commit range. APK compilation was skipped to prevent redundant builds."
