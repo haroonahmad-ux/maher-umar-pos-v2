@@ -36,40 +36,48 @@ jobs:
             echo "present=false" >> "$GITHUB_OUTPUT"
             echo "No Supabase migration files exist in this repository yet; schema sync is safely skipped." >> "$GITHUB_STEP_SUMMARY"
           fi
-      - name: Validate required deployment secrets
-        if: steps.migrations.outputs.present == 'true'
+      - name: Check optional deployment credentials
+        id: credentials
+        if: steps.migrations.outputs.present == 'true' && steps.credentials.outputs.ready == 'true'
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
           SUPABASE_PROJECT_ID: dtajbsosaaohyluedcof
         run: |
           set -euo pipefail
+          missing=()
           for name in SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD; do
             if [[ -z "${!name}" ]]; then
-              echo "::error::Missing required GitHub Actions secret: $name"
-              exit 1
+              missing+=("$name")
             fi
           done
+          if (( ${#missing[@]} > 0 )); then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Supabase schema sync skipped; missing Actions secrets: ${missing[*]}"
+            echo "Schema files were detected, but deployment credentials are not configured. Add the documented secrets to activate validation and deployment." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Install Supabase CLI v2
-        if: steps.migrations.outputs.present == 'true'
+        if: steps.migrations.outputs.present == 'true' && steps.credentials.outputs.ready == 'true'
         uses: supabase/setup-cli@v3
         with:
           version: v2.stable
       - name: Link Supabase project
-        if: steps.migrations.outputs.present == 'true'
+        if: steps.migrations.outputs.present == 'true' && steps.credentials.outputs.ready == 'true'
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
           SUPABASE_PROJECT_ID: dtajbsosaaohyluedcof
         run: supabase link --project-ref "$SUPABASE_PROJECT_ID"
       - name: Preview pending migrations on pull requests
-        if: github.event_name == 'pull_request' && steps.migrations.outputs.present == 'true'
+        if: github.event_name == 'pull_request' && steps.migrations.outputs.present == 'true' && steps.credentials.outputs.ready == 'true'
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: supabase db push --dry-run
       - name: Apply migrations to production after merge
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.migrations.outputs.present == 'true'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.migrations.outputs.present == 'true' && steps.credentials.outputs.ready == 'true'
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
