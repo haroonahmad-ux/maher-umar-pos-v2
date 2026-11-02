@@ -120,3 +120,67 @@ jobs:
     steps:
       - name: Explain build skip
         run: echo "No file changes detected in this commit range. APK compilation was skipped to prevent redundant builds."
+
+  notify-whatsapp:
+    name: WhatsApp build result notification
+    needs: [detect-changes, build]
+    if: always() && (needs.detect-changes.result == 'failure' || needs.build.result == 'failure' || needs.build.result == 'success')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Send build result to WhatsApp Cloud API
+        env:
+          WHATSAPP_ACCESS_TOKEN: ${{ secrets.WHATSAPP_ACCESS_TOKEN }}
+          WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}
+          WHATSAPP_TO: ${{ secrets.WHATSAPP_TO }}
+          WHATSAPP_TEMPLATE_NAME: ${{ vars.WHATSAPP_TEMPLATE_NAME }}
+          WHATSAPP_TEMPLATE_LANGUAGE: ${{ vars.WHATSAPP_TEMPLATE_LANGUAGE }}
+          WHATSAPP_GRAPH_API_VERSION: ${{ vars.WHATSAPP_GRAPH_API_VERSION || 'v23.0' }}
+          REPOSITORY: ${{ github.repository }}
+          WORKFLOW_NAME: ${{ github.workflow }}
+          CONCLUSION: ${{ needs.build.result == 'success' && 'SUCCESS' || 'FAILURE' }}
+          BRANCH: ${{ github.ref_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in WHATSAPP_ACCESS_TOKEN WHATSAPP_PHONE_NUMBER_ID WHATSAPP_TO WHATSAPP_TEMPLATE_NAME; do
+            if [[ -z "${!name}" ]]; then
+              echo "Missing $name; WhatsApp alert not sent." >> "$GITHUB_STEP_SUMMARY"
+              missing=1
+            fi
+          done
+          if [[ "$missing" -eq 1 ]]; then
+            echo "Configure WhatsApp Cloud API secrets and template variables to enable alerts."
+            exit 0
+          fi
+          payload="$(python - <<'PY'
+          import json, os
+          values = [
+              os.environ["REPOSITORY"],
+              os.environ["WORKFLOW_NAME"],
+              os.environ["CONCLUSION"],
+              os.environ["BRANCH"],
+              os.environ["RUN_URL"],
+          ]
+          print(json.dumps({
+              "messaging_product": "whatsapp",
+              "to": os.environ["WHATSAPP_TO"],
+              "type": "template",
+              "template": {
+                  "name": os.environ["WHATSAPP_TEMPLATE_NAME"],
+                  "language": {"code": os.environ.get("WHATSAPP_TEMPLATE_LANGUAGE") or "en_US"},
+                  "components": [{
+                      "type": "body",
+                      "parameters": [{"type": "text", "text": value} for value in values]
+                  }]
+              }
+          }))
+          PY
+          )"
+          curl --fail-with-body --silent --show-error \
+            -X POST "https://graph.facebook.com/${WHATSAPP_GRAPH_API_VERSION}/${WHATSAPP_PHONE_NUMBER_ID}/messages" \
+            -H "Authorization: Bearer ${WHATSAPP_ACCESS_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data "$payload"
+          echo "WhatsApp notification request accepted by Meta Cloud API." >> "$GITHUB_STEP_SUMMARY"
