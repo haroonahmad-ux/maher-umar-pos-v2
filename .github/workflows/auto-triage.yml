@@ -1,0 +1,81 @@
+name: PR Triage and Commit Categorization
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, edited]
+  push:
+    branches:
+      - main
+      - feature/bizcore-retailer-ui-csv-backup
+      - feature/renjana-virtual-runtime
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  label-pull-request:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Apply labels from changed files and branch name
+        uses: actions/labeler@v5
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          configuration-path: .github/labeler.yml
+          sync-labels: true
+
+  categorize-commit:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Categorize pushed commits
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$BEFORE_SHA" || "$BEFORE_SHA" =~ ^0+$ ]]; then
+            RANGE="$AFTER_SHA"
+          else
+            RANGE="$BEFORE_SHA..$AFTER_SHA"
+          fi
+          echo "## Commit categorization" >> "$GITHUB_STEP_SUMMARY"
+          git log --format='- %h %s' "$RANGE" | while IFS= read -r line; do
+            subject="${line#* }"
+            case "$subject" in
+              feat:*|feat\(*\):*) category="feature" ;;
+              fix:*|fix\(*\):*) category="bug fix" ;;
+              docs:*|docs\(*\):*) category="documentation" ;;
+              test:*|test\(*\):*) category="tests" ;;
+              refactor:*|refactor\(*\):*) category="refactor" ;;
+              chore:*|chore\(*\):*|ci:*|ci\(*\):*) category="maintenance / CI" ;;
+              *) category="other" ;;
+            esac
+            printf '%s — **%s**\n' "$line" "$category" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+  request-reviewers:
+    if: github.event_name == 'pull_request' && github.event.action != 'synchronize'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Request configured reviewers
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REVIEWERS: ${{ vars.PR_REVIEWERS }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${REVIEWERS//[[:space:]]/}" ]]; then
+            echo "PR_REVIEWERS repository variable is not configured; reviewer assignment skipped." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          payload="$(REVIEWERS="$REVIEWERS" python -c 'import json,os; print(json.dumps({"reviewers":[x.strip() for x in os.environ["REVIEWERS"].split(",") if x.strip()]}))')"
+          if [[ "$payload" == '{"reviewers":[]}' ]]; then
+            echo "No valid reviewers configured; skipped."
+            exit 0
+          fi
+          printf '%s' "$payload" | gh api --method POST "repos/$REPOSITORY/pulls/$PR_NUMBER/requested_reviewers" --input -
