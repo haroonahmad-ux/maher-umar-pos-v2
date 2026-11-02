@@ -60,7 +60,7 @@ jobs:
           done
 
   request-reviewers:
-    if: github.event_name == 'pull_request' && github.event.action != 'synchronize'
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     steps:
       - name: Request configured reviewers
