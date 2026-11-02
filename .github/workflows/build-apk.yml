@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - main
+      - feat/stock-management-discounts
+      - feature/firebase-phone-otp
+      - feature/bizcore-retailer-ui-csv-backup
   pull_request:
     branches:
       - main
@@ -17,8 +20,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  detect-changes:
+    name: Anti-loop change detection
+    uses: ./.github/workflows/build-guard.yml
+    permissions:
+      contents: read
+
   build:
     name: Build Android APK
+    needs: detect-changes
+    if: needs.detect-changes.outputs.has_changes == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
 
@@ -29,7 +40,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.14"
+          python-version: "3.11"
           cache: pip
 
       - name: Set up Java
@@ -37,58 +48,139 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
+          cache-dependency-path: buildozer.spec
 
       - name: Install system dependencies
+        shell: bash
         run: |
+          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y \
-            git \
-            zip \
-            unzip \
-            autoconf \
-            automake \
-            libtool \
-            pkg-config \
-            cmake \
-            build-essential \
-            libffi-dev \
-            libssl-dev \
-            zlib1g-dev \
-            libncurses-dev \
-            libtinfo6 \
-            libltdl-dev \
-            gettext \
-            ccache
+          sudo apt-get install --yes git zip unzip autoconf automake libtool pkg-config cmake build-essential libffi-dev libssl-dev zlib1g-dev libncurses-dev libtinfo6 libltdl-dev gettext ccache
 
       - name: Install current Buildozer
+        shell: bash
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip setuptools wheel
-          python -m pip install \
-            "git+https://github.com/kivy/buildozer.git"
+          python -m pip install "git+https://github.com/kivy/buildozer.git"
 
-      - name: Verify build configuration
+      - name: Verify build configuration and Python syntax
         run: |
           python --version
           java -version
           buildozer --version
           test -f buildozer.spec
           test -f main.py
+          python -m py_compile main.py
 
       - name: Prepare isolated application source
         run: |
+          set -euo pipefail
           rm -rf .app-source
           mkdir -p .app-source
           cp main.py .app-source/main.py
+          base64 -d app_icon.png.b64 > app_icon.png
+          cp app_icon.png .app-source/app_icon.png
 
-      - name: Build debug APK
+      - name: Build debug APK (retry transient Gradle download failures)
+        shell: bash
         run: |
-          buildozer -v android debug
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            echo "APK build attempt ${attempt}/3"
+            if buildozer -v android debug; then
+              exit 0
+            fi
+
+            if [ "${attempt}" -lt 3 ]; then
+              delay=$((attempt * 30))
+              echo "Build failed. Retrying in ${delay} seconds; generated Buildozer/Gradle files will be retained."
+              sleep "${delay}"
+            fi
+          done
+
+          echo "::error::APK build failed after 3 attempts."
+          exit 1
 
       - name: Upload APK
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: pos-v2-apk
           path: bin/*.apk
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
+
+  skipped:
+    name: Report unchanged commit
+    needs: detect-changes
+    if: needs.detect-changes.outputs.has_changes != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain build skip
+        run: echo "No file changes detected in this commit range. APK compilation was skipped to prevent redundant builds."
+
+  notify-whatsapp:
+    name: WhatsApp build result notification
+    needs: [detect-changes, build]
+    if: always() && (needs.detect-changes.result == 'failure' || needs.build.result == 'failure' || needs.build.result == 'success')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Send build result to WhatsApp Cloud API
+        env:
+          WHATSAPP_ACCESS_TOKEN: ${{ secrets.WHATSAPP_ACCESS_TOKEN }}
+          WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}
+          WHATSAPP_TO: ${{ secrets.WHATSAPP_TO }}
+          WHATSAPP_TEMPLATE_NAME: ${{ vars.WHATSAPP_TEMPLATE_NAME }}
+          WHATSAPP_TEMPLATE_LANGUAGE: ${{ vars.WHATSAPP_TEMPLATE_LANGUAGE }}
+          WHATSAPP_GRAPH_API_VERSION: ${{ vars.WHATSAPP_GRAPH_API_VERSION || 'v23.0' }}
+          REPOSITORY: ${{ github.repository }}
+          WORKFLOW_NAME: ${{ github.workflow }}
+          CONCLUSION: ${{ needs.build.result == 'success' && 'SUCCESS' || 'FAILURE' }}
+          BRANCH: ${{ github.ref_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in WHATSAPP_ACCESS_TOKEN WHATSAPP_PHONE_NUMBER_ID WHATSAPP_TO WHATSAPP_TEMPLATE_NAME; do
+            if [[ -z "${!name}" ]]; then
+              echo "Missing $name; WhatsApp alert not sent." >> "$GITHUB_STEP_SUMMARY"
+              missing=1
+            fi
+          done
+          if [[ "$missing" -eq 1 ]]; then
+            echo "Configure WhatsApp Cloud API secrets and template variables to enable alerts."
+            exit 0
+          fi
+          payload="$(python - <<'PY'
+          import json, os
+          values = [
+              os.environ["REPOSITORY"],
+              os.environ["WORKFLOW_NAME"],
+              os.environ["CONCLUSION"],
+              os.environ["BRANCH"],
+              os.environ["RUN_URL"],
+          ]
+          print(json.dumps({
+              "messaging_product": "whatsapp",
+              "to": os.environ["WHATSAPP_TO"],
+              "type": "template",
+              "template": {
+                  "name": os.environ["WHATSAPP_TEMPLATE_NAME"],
+                  "language": {"code": os.environ.get("WHATSAPP_TEMPLATE_LANGUAGE") or "en_US"},
+                  "components": [{
+                      "type": "body",
+                      "parameters": [{"type": "text", "text": value} for value in values]
+                  }]
+              }
+          }))
+          PY
+          )"
+          curl --fail-with-body --silent --show-error \
+            -X POST "https://graph.facebook.com/${WHATSAPP_GRAPH_API_VERSION}/${WHATSAPP_PHONE_NUMBER_ID}/messages" \
+            -H "Authorization: Bearer ${WHATSAPP_ACCESS_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data "$payload"
+          echo "WhatsApp notification request accepted by Meta Cloud API." >> "$GITHUB_STEP_SUMMARY"
