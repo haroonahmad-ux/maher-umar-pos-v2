@@ -29,6 +29,10 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Categorize pushed commits
         shell: bash
         env:
