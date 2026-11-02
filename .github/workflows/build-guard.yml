@@ -1,0 +1,77 @@
+name: Reusable Anti-Loop Build Guard
+
+on:
+  workflow_call:
+    outputs:
+      has_changes:
+        description: "Whether the commit range contains file changes"
+        value: ${{ jobs.detect.outputs.has_changes }}
+
+permissions:
+  contents: read
+
+jobs:
+  detect:
+    name: Detect actual repository changes
+    runs-on: ubuntu-latest
+    outputs:
+      has_changes: ${{ steps.diff.outputs.has_changes }}
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compare the event commit range
+        id: diff
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.event.after }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            BASE_SHA="$PR_BASE_SHA"
+            HEAD_SHA="$PR_HEAD_SHA"
+          elif [[ "$EVENT_NAME" == "push" ]]; then
+            BASE_SHA="$BEFORE_SHA"
+            HEAD_SHA="$AFTER_SHA"
+          else
+            # Manual dispatch (or another caller event): compare HEAD with its parent.
+            HEAD_SHA="$CURRENT_SHA"
+            BASE_SHA="$(git rev-parse "${HEAD_SHA}^" 2>/dev/null || true)"
+          fi
+
+          # A new branch/initial commit has no usable previous revision; build it.
+          if [[ -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]]; then
+            echo "No previous commit exists; treating this as an initial code change."
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null ||
+             ! git cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null; then
+            echo "::error::Unable to resolve the commit range for change detection."
+            exit 1
+          fi
+
+          echo "Comparing $BASE_SHA...$HEAD_SHA"
+          if git diff --quiet "$BASE_SHA" "$HEAD_SHA" --; then
+            echo "No file changes found; APK compilation will be skipped."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            status=$?
+            if [[ "$status" -eq 1 ]]; then
+              echo "File changes detected:"
+              git diff --name-only "$BASE_SHA" "$HEAD_SHA" --
+              echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "::error::git diff failed with exit code $status."
+              exit "$status"
+            fi
+          fi
