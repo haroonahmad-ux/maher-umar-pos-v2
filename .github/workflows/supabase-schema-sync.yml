@@ -38,7 +38,7 @@ jobs:
           fi
       - name: Check optional deployment credentials
         id: credentials
-        if: steps.migrations.outputs.present == 'true' && steps.credentials.outputs.ready == 'true'
+        if: steps.migrations.outputs.present == 'true'
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
