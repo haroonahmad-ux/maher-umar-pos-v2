@@ -46,18 +46,17 @@ jobs:
             RANGE="$BEFORE_SHA..$AFTER_SHA"
           fi
           echo "## Commit categorization" >> "$GITHUB_STEP_SUMMARY"
-          git log --format='- %h %s' "$RANGE" | while IFS= read -r line; do
-            subject="${line#* }"
+          git log --format='%h%x09%s' "$RANGE" | while IFS=$'\t' read -r sha subject; do
             case "$subject" in
-              feat:*|feat\(*\):*) category="feature" ;;
-              fix:*|fix\(*\):*) category="bug fix" ;;
-              docs:*|docs\(*\):*) category="documentation" ;;
-              test:*|test\(*\):*) category="tests" ;;
-              refactor:*|refactor\(*\):*) category="refactor" ;;
-              chore:*|chore\(*\):*|ci:*|ci\(*\):*) category="maintenance / CI" ;;
+              feat*:* ) category="feature" ;;
+              fix*:* ) category="bug fix" ;;
+              docs*:* ) category="documentation" ;;
+              test*:* ) category="tests" ;;
+              refactor*:* ) category="refactor" ;;
+              chore*:*|ci*:* ) category="maintenance / CI" ;;
               *) category="other" ;;
             esac
-            printf '%s — **%s**\n' "$line" "$category" >> "$GITHUB_STEP_SUMMARY"
+            printf -- '- `%s` — **%s** — %s\n' "$sha" "$category" "$subject" >> "$GITHUB_STEP_SUMMARY"
           done
 
   request-reviewers:
