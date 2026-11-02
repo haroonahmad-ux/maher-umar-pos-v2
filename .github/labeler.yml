@@ -1,0 +1,52 @@
+# Labels are synchronized by actions/labeler when a PR is opened or updated.
+"area: android":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.kt"
+          - "**/*.kts"
+          - "app/src/**"
+          - "app/build.gradle.kts"
+"area: python":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.py"
+"area: database":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "supabase/**"
+"area: ci-cd":
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/workflows/**"
+          - ".github/labeler.yml"
+"area: docs":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.md"
+          - "docs/**"
+"area: dependencies":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "requirements*.txt"
+          - "pyproject.toml"
+          - "Pipfile*"
+          - "build.gradle.kts"
+          - "settings.gradle.kts"
+"area: tests":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/test/**"
+          - "**/tests/**"
+          - "**/*Test.kt"
+          - "**/*_test.py"
+"kind: feature":
+  - head-branch:
+      - "^feat/"
+      - "^feature/"
+"kind: bug":
+  - head-branch:
+      - "^fix/"
+      - "^bugfix/"
+"kind: docs":
+  - head-branch:
+      - "^docs/"
