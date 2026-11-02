@@ -52,32 +52,18 @@ jobs:
           cache-dependency-path: buildozer.spec
 
       - name: Install system dependencies
+        shell: bash
         run: |
+          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y \
-            git \
-            zip \
-            unzip \
-            autoconf \
-            automake \
-            libtool \
-            pkg-config \
-            cmake \
-            build-essential \
-            libffi-dev \
-            libssl-dev \
-            zlib1g-dev \
-            libncurses-dev \
-            libtinfo6 \
-            libltdl-dev \
-            gettext \
-            ccache
+          sudo apt-get install --yes git zip unzip autoconf automake libtool pkg-config cmake build-essential libffi-dev libssl-dev zlib1g-dev libncurses-dev libtinfo6 libltdl-dev gettext ccache
 
       - name: Install current Buildozer
+        shell: bash
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip setuptools wheel
-          python -m pip install \
-            "git+https://github.com/kivy/buildozer.git"
+          python -m pip install "git+https://github.com/kivy/buildozer.git"
 
       - name: Verify build configuration and Python syntax
         run: |
@@ -90,6 +76,7 @@ jobs:
 
       - name: Prepare isolated application source
         run: |
+          set -euo pipefail
           rm -rf .app-source
           mkdir -p .app-source
           cp main.py .app-source/main.py
@@ -99,7 +86,7 @@ jobs:
       - name: Build debug APK (retry transient Gradle download failures)
         shell: bash
         run: |
-          set -o pipefail
+          set -euo pipefail
           for attempt in 1 2 3; do
             echo "APK build attempt ${attempt}/3"
             if buildozer -v android debug; then
@@ -117,12 +104,12 @@ jobs:
           exit 1
 
       - name: Upload APK
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: pos-v2-apk
           path: bin/*.apk
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
 
   skipped:
