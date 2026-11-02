@@ -6,6 +6,8 @@ import csv
 import io
 import threading
 import zipfile
+import posixpath
+import xml.etree.ElementTree as ET
 import shutil
 import sqlite3
 import sys
@@ -549,7 +551,7 @@ KV = r'''
                     text: 'Save Product'
                     on_release: root.add_product()
                 SuccessButton:
-                    text: 'Import CSV File'
+                    text: 'Import CSV / Excel File'
                     on_release: app.import_products_csv()
         SecondaryButton:
             text: 'Back to Dashboard'
@@ -2449,8 +2451,91 @@ class MaherUmarPOSApp(App):
             if not matches: results.add_widget(Label(text="No matching products found.",size_hint_y=None,height=dp(42),color=(0.35,0.43,0.46,1)))
         query.bind(text=render); render(); popup.open()
 
+    def _xlsx_to_csv_text(self, raw):
+        """Read the first worksheet from an XLSX file using only Python's standard library."""
+        try:
+            with zipfile.ZipFile(io.BytesIO(raw), "r") as workbook:
+                names = set(workbook.namelist())
+                if "xl/workbook.xml" not in names:
+                    raise ValueError("Excel workbook structure invalid hai.")
+
+                workbook_root = ET.fromstring(workbook.read("xl/workbook.xml"))
+                rels_name = "xl/_rels/workbook.xml.rels"
+                sheet_path = "xl/worksheets/sheet1.xml"
+                if rels_name in names:
+                    rels_root = ET.fromstring(workbook.read(rels_name))
+                    rel_ns = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+                    targets = {item.attrib.get("Id"): item.attrib.get("Target")
+                               for item in rels_root.findall(rel_ns + "Relationship")}
+                    main_ns = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+                    office_rel = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+                    first_sheet = workbook_root.find(".//" + main_ns + "sheet")
+                    if first_sheet is not None:
+                        target = targets.get(first_sheet.attrib.get(office_rel + "id"))
+                        if target:
+                            sheet_path = (target.lstrip("/") if target.startswith("/")
+                                          else posixpath.normpath(posixpath.join("xl", target)))
+
+                if sheet_path not in names:
+                    raise ValueError("Excel workbook ki first worksheet nahi mili.")
+
+                shared_strings = []
+                if "xl/sharedStrings.xml" in names:
+                    shared_root = ET.fromstring(workbook.read("xl/sharedStrings.xml"))
+                    main_ns = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+                    for item in shared_root.findall(main_ns + "si"):
+                        shared_strings.append("".join(
+                            node.text or "" for node in item.iter()
+                            if node.tag.endswith("}t")
+                        ))
+
+                sheet_root = ET.fromstring(workbook.read(sheet_path))
+                main_ns = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+                rows = []
+                for row_node in sheet_root.findall(".//" + main_ns + "sheetData/" + main_ns + "row"):
+                    cells = {}
+                    max_col = -1
+                    for cell in row_node.findall(main_ns + "c"):
+                        ref = cell.attrib.get("r", "")
+                        letters = "".join(ch for ch in ref if ch.isalpha()).upper()
+                        if not letters:
+                            continue
+                        col = 0
+                        for char in letters:
+                            col = col * 26 + (ord(char) - 64)
+                        col -= 1
+                        max_col = max(max_col, col)
+                        cell_type = cell.attrib.get("t", "")
+                        value_node = cell.find(main_ns + "v")
+                        value = value_node.text if value_node is not None and value_node.text is not None else ""
+                        if cell_type == "s" and value != "":
+                            try:
+                                value = shared_strings[int(value)]
+                            except (ValueError, IndexError):
+                                raise ValueError("Excel file mein shared-string reference invalid hai.")
+                        elif cell_type == "inlineStr":
+                            inline = cell.find(main_ns + "is")
+                            value = "".join(
+                                node.text or "" for node in inline.iter()
+                                if node.tag.endswith("}t")
+                            ) if inline is not None else ""
+                        elif cell_type == "b":
+                            value = "TRUE" if value == "1" else "FALSE"
+                        cells[col] = value
+                    if max_col >= 0:
+                        rows.append([cells.get(index, "") for index in range(max_col + 1)])
+
+                if not rows:
+                    raise ValueError("Excel worksheet khaali hai.")
+                output = io.StringIO(newline="")
+                writer = csv.writer(output)
+                writer.writerows(rows)
+                return output.getvalue()
+        except zipfile.BadZipFile:
+            raise ValueError("Selected Excel file valid .xlsx workbook nahi hai.")
+
     def import_products_csv(self):
-        """Open Android's document picker and import a CSV into this retailer's local database."""
+        """Open Android's document picker for CSV/XLSX product import."""
         try:
             from android import activity
             from jnius import autoclass
@@ -2458,7 +2543,7 @@ class MaherUmarPOSApp(App):
             intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
             intent.addCategory(Intent.CATEGORY_OPENABLE)
             intent.setType("*/*")
-            intent.putExtra(Intent.EXTRA_TITLE, "Select BizCore CSV file")
+            intent.putExtra(Intent.EXTRA_TITLE, "Select BizCore CSV or Excel file")
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
             activity.bind(on_activity_result=self._on_import_csv_result)
@@ -2468,7 +2553,7 @@ class MaherUmarPOSApp(App):
                 activity.unbind(on_activity_result=self._on_import_csv_result)
             except Exception:
                 pass
-            show_message("CSV file picker open nahi ho saka: " + str(exc), "CSV import unavailable")
+            show_message("CSV / Excel file picker open nahi ho saka: " + str(exc), "Product import unavailable")
 
     def _on_import_csv_result(self, request_code, result_code, intent):
         if request_code != 7413:
@@ -2481,7 +2566,7 @@ class MaherUmarPOSApp(App):
             except Exception:
                 pass
             if result_code != -1 or intent is None or intent.getData() is None:
-                show_message("CSV import cancel kar diya gaya. Existing products unchanged hain.", "Import cancelled")
+                show_message("Product import cancel kar diya gaya. Existing products unchanged hain.", "Import cancelled")
                 return
 
             resolver = autoclass("org.kivy.android.PythonActivity").mActivity.getContentResolver()
@@ -2502,12 +2587,17 @@ class MaherUmarPOSApp(App):
             if not data:
                 raise ValueError("Selected CSV file khaali hai.")
 
-            # Support UTF-8/UTF-8 BOM and common Excel-exported Windows CSV files.
             raw = bytes(data)
-            try:
-                csv_text = raw.decode("utf-8-sig")
-            except UnicodeDecodeError:
-                csv_text = raw.decode("cp1252")
+            # XLSX is parsed from its OpenXML worksheet without third-party packages,
+            # keeping Android APK size and python-for-android compatibility stable.
+            if zipfile.is_zipfile(io.BytesIO(raw)):
+                csv_text = self._xlsx_to_csv_text(raw)
+            else:
+                # Support UTF-8/UTF-8 BOM and common Excel-exported Windows CSV files.
+                try:
+                    csv_text = raw.decode("utf-8-sig")
+                except UnicodeDecodeError:
+                    csv_text = raw.decode("cp1252")
             sample = csv_text[:8192]
             try:
                 dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
