@@ -1,0 +1,75 @@
+name: WhatsApp Build Notifications
+
+on:
+  workflow_run:
+    workflows:
+      - "Build POS v2 APK"
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  notify-whatsapp:
+    if: github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'cancelled'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Send build result to WhatsApp Cloud API
+        env:
+          WHATSAPP_ACCESS_TOKEN: ${{ secrets.WHATSAPP_ACCESS_TOKEN }}
+          WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}
+          WHATSAPP_TO: ${{ secrets.WHATSAPP_TO }}
+          WHATSAPP_TEMPLATE_NAME: ${{ vars.WHATSAPP_TEMPLATE_NAME }}
+          WHATSAPP_TEMPLATE_LANGUAGE: ${{ vars.WHATSAPP_TEMPLATE_LANGUAGE }}
+          WHATSAPP_GRAPH_API_VERSION: ${{ vars.WHATSAPP_GRAPH_API_VERSION || 'v23.0' }}
+          REPOSITORY: ${{ github.repository }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in WHATSAPP_ACCESS_TOKEN WHATSAPP_PHONE_NUMBER_ID WHATSAPP_TO WHATSAPP_TEMPLATE_NAME; do
+            if [[ -z "${!name}" ]]; then
+              echo "Missing $name; WhatsApp alert not sent." >> "$GITHUB_STEP_SUMMARY"
+              missing=1
+            fi
+          done
+          if [[ "$missing" -eq 1 ]]; then
+            echo "Configure the documented WhatsApp repository secrets/variables to enable alerts."
+            exit 0
+          fi
+          language="${WHATSAPP_TEMPLATE_LANGUAGE:-en_US}"
+          payload="$(python - <<'PY'
+          import json, os
+          params = [
+              os.environ["REPOSITORY"],
+              os.environ["WORKFLOW_NAME"],
+              os.environ["CONCLUSION"].upper(),
+              os.environ["BRANCH"],
+              os.environ["RUN_URL"],
+          ]
+          print(json.dumps({
+              "messaging_product": "whatsapp",
+              "to": os.environ["WHATSAPP_TO"],
+              "type": "template",
+              "template": {
+                  "name": os.environ["WHATSAPP_TEMPLATE_NAME"],
+                  "language": {"code": os.environ.get("WHATSAPP_TEMPLATE_LANGUAGE") or "en_US"},
+                  "components": [{
+                      "type": "body",
+                      "parameters": [{"type": "text", "text": value} for value in params]
+                  }]
+              }
+          }))
+          PY
+          )"
+          curl --fail-with-body --silent --show-error \
+            -X POST "https://graph.facebook.com/${WHATSAPP_GRAPH_API_VERSION}/${WHATSAPP_PHONE_NUMBER_ID}/messages" \
+            -H "Authorization: Bearer ${WHATSAPP_ACCESS_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data "$payload"
+          echo "WhatsApp build alert dispatched." >> "$GITHUB_STEP_SUMMARY"
