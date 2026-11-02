@@ -10,7 +10,7 @@ These workflows extend the existing Android build pipeline. They do not modify t
 
 ## PR quality checks
 
-- Python project: Ruff style/common-error checks plus Python bytecode syntax compilation.
+- Python project: Python bytecode syntax compilation plus Ruff checks on the active `main.py` entrypoint. Existing legacy one-line formatting and unused-import debt is temporarily excluded from Ruff's fail gate so new critical diagnostics remain actionable.
 - Kotlin project: Gradle `check` and Android debug compilation.
 
 ## Supabase schema sync
