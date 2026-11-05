@@ -1,0 +1,60 @@
+name: Pull Request Quality
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-quality-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  python-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile all Python sources
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import py_compile
+          excluded = {".git", ".venv", "venv", "build", "dist", "__pycache__"}
+          files = [
+              p for p in Path(".").rglob("*.py")
+              if not any(part in excluded for part in p.parts)
+          ]
+          if not files:
+              print("No Python files found; nothing to compile.")
+          for path in files:
+              py_compile.compile(str(path), doraise=True)
+          print(f"Compiled {len(files)} Python files successfully.")
+          PY
+      - name: Request configured reviewers
+        if: ${{ vars.AUTO_REVIEWERS != '' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const raw = process.env.AUTO_REVIEWERS || "";
+            const reviewers = raw.split(",").map(x => x.trim()).filter(Boolean);
+            if (!reviewers.length) return;
+            const author = context.payload.pull_request.user.login;
+            const eligible = reviewers.filter(x => x.toLowerCase() !== author.toLowerCase());
+            if (!eligible.length) {
+              core.notice("No configured reviewer is eligible (PR author cannot review their own PR).");
+              return;
+            }
+            await github.rest.pulls.requestReviewers({
+              ...context.repo,
+              pull_number: context.payload.pull_request.number,
+              reviewers: eligible
+            });
+        env:
+          AUTO_REVIEWERS: ${{ vars.AUTO_REVIEWERS }}
