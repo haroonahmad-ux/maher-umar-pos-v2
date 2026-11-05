@@ -1,0 +1,40 @@
+name: Supabase Schema Sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_apply:
+        description: "Set true only after reviewing the SQL migrations"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  schema-sync:
+    if: ${{ inputs.confirm_apply == true }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require configured Supabase database URL and migrations
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          test -n "$SUPABASE_DB_URL" || {
+            echo "::error::Add SUPABASE_DB_URL in repository Actions secrets."
+            exit 1
+          }
+          test -d supabase/migrations || {
+            echo "::error::supabase/migrations directory is missing; no schema was changed."
+            exit 1
+          }
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Apply reviewed migrations
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: supabase db push --db-url "$SUPABASE_DB_URL" --yes
