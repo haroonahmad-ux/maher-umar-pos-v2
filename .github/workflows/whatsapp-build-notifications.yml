@@ -11,7 +11,6 @@ permissions:
 
 jobs:
   notify:
-    if: ${{ secrets.WHATSAPP_WEBHOOK_URL != '' }}
     runs-on: ubuntu-latest
     steps:
       - name: Send build result to configured WhatsApp gateway
@@ -22,6 +21,7 @@ jobs:
           CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           RUN_URL: ${{ github.event.workflow_run.html_url }}
         run: |
+          if [ -z "$WEBHOOK_URL" ]; then echo "WHATSAPP_WEBHOOK_URL is not configured; notification skipped."; exit 0; fi
           python - <<'PY'
           import json, os, urllib.request
           payload = {
