@@ -1,0 +1,42 @@
+name: WhatsApp Build Notifications
+
+on:
+  workflow_run:
+    workflows: ["Build POS v2 APK"]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  notify:
+    if: ${{ secrets.WHATSAPP_WEBHOOK_URL != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send build result to configured WhatsApp gateway
+        env:
+          WEBHOOK_URL: ${{ secrets.WHATSAPP_WEBHOOK_URL }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request
+          payload = {
+              "event": "github_actions_build",
+              "repository": os.environ["REPO"],
+              "branch": os.environ["BRANCH"],
+              "status": os.environ["CONCLUSION"],
+              "run_url": os.environ["RUN_URL"],
+          }
+          request = urllib.request.Request(
+              os.environ["WEBHOOK_URL"],
+              data=json.dumps(payload).encode(),
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+          with urllib.request.urlopen(request, timeout=20) as response:
+              print(f"Webhook returned HTTP {response.status}")
+          PY
