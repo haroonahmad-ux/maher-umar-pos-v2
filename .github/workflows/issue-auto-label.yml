@@ -1,0 +1,44 @@
+name: Issue Auto Labeling
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Classify and apply labels
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const text = `${issue.title}\n${issue.body || ""}`.toLowerCase();
+            const rules = [
+              ["bug", /\\b(bug|error|crash|failed|failure|broken|regression)\\b/],
+              ["enhancement", /\\b(feature|enhancement|request|improve|add|support)\\b/],
+              ["documentation", /\\b(document|docs|readme|guide|typo)\\b/],
+              ["question", /\\b(question|how do i|help|support)\\b/],
+              ["security", /\\b(security|vulnerability|privacy|permission|secret)\\b/]
+            ];
+            const selected = rules.filter(([, pattern]) => pattern.test(text)).map(([name]) => name);
+            if (!selected.length) selected.push("triage");
+            for (const name of selected) {
+              try {
+                await github.rest.issues.getLabel({ ...context.repo, name });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+                await github.rest.issues.createLabel({
+                  ...context.repo, name,
+                  color: name === "security" ? "b60205" : "ededed",
+                  description: "Automatically applied issue classification"
+                });
+              }
+            }
+            await github.rest.issues.addLabels({
+              ...context.repo, issue_number: issue.number, labels: selected
+            });
