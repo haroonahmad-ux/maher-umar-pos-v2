@@ -19,11 +19,11 @@ jobs:
             const issue = context.payload.issue;
             const text = `${issue.title}\n${issue.body || ""}`.toLowerCase();
             const rules = [
-              ["bug", /\\b(bug|error|crash|failed|failure|broken|regression)\\b/],
-              ["enhancement", /\\b(feature|enhancement|request|improve|add|support)\\b/],
-              ["documentation", /\\b(document|docs|readme|guide|typo)\\b/],
-              ["question", /\\b(question|how do i|help|support)\\b/],
-              ["security", /\\b(security|vulnerability|privacy|permission|secret)\\b/]
+              ["bug", /\b(bug|error|crash|failed|failure|broken|regression)\b/],
+              ["enhancement", /\b(feature|enhancement|request|improve|add|support)\b/],
+              ["documentation", /\b(document|docs|readme|guide|typo)\b/],
+              ["question", /\b(question|how do i|help|support)\b/],
+              ["security", /\b(security|vulnerability|privacy|permission|secret)\b/]
             ];
             const selected = rules.filter(([, pattern]) => pattern.test(text)).map(([name]) => name);
             if (!selected.length) selected.push("triage");
